@@ -1,0 +1,65 @@
+{
+  "users": [],
+  "businesses": [],
+  "integrations": [],
+  "templates": [
+    {
+      "id": "tpl_lead_follow_up",
+      "title": "Lead Follow-up",
+      "description": "Automatically follow up with new leads and nurture relationships.",
+      "category": "sales",
+      "recommended": true,
+      "trigger": "lead.created",
+      "actions": ["classify_lead", "draft_reply", "request_approval", "send_email"]
+    },
+    {
+      "id": "tpl_invoice_reminder",
+      "title": "Invoice Reminder",
+      "description": "Send automated invoice reminders and track payments easily.",
+      "category": "payments",
+      "recommended": false,
+      "trigger": "invoice.overdue",
+      "actions": ["draft_reminder", "send_email", "log_activity"]
+    },
+    {
+      "id": "tpl_support_triage",
+      "title": "Support Triage",
+      "description": "Automatically triage and assign support tickets to the right team.",
+      "category": "support",
+      "recommended": false,
+      "trigger": "message.received",
+      "actions": ["classify_ticket", "assign_owner", "notify_team"]
+    },
+    {
+      "id": "tpl_whatsapp_routing",
+      "title": "WhatsApp Routing",
+      "description": "Route WhatsApp messages to the right team or team member.",
+      "category": "communication",
+      "recommended": false,
+      "trigger": "whatsapp.message_received",
+      "actions": ["classify_message", "route_conversation", "log_activity"]
+    },
+    {
+      "id": "tpl_meeting_follow_up",
+      "title": "Meeting Follow-Up",
+      "description": "Send personalized follow-ups after every call or demo automatically.",
+      "category": "sales",
+      "recommended": false,
+      "trigger": "meeting.completed",
+      "actions": ["summarize_notes", "draft_reply", "send_email"]
+    },
+    {
+      "id": "tpl_crm_auto_update",
+      "title": "CRM Auto-Update",
+      "description": "Sync lead data to your CRM automatically on every interaction.",
+      "category": "crm",
+      "recommended": false,
+      "trigger": "lead.updated",
+      "actions": ["normalize_contact", "update_crm", "log_activity"]
+    }
+  ],
+  "workflows": [],
+  "leads": [],
+  "activity": [],
+  "approvals": []
+}

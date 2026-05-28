@@ -1,0 +1,14 @@
+{
+  "name": "flowpilot-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered workflow automation platform for businesses.",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "node backend/server.js",
+    "test": "node backend/test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

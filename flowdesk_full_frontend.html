@@ -1,4 +1,10 @@
 
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FlowPilot AI</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -39,15 +45,109 @@ a{text-decoration:none}
 input[type=text],input[type=email],input[type=password],input[type=search]{outline:none;border:1px solid var(--bo);border-radius:8px;padding:10px 12px;font-size:14px;color:var(--tx);width:100%;transition:border-color .15s}
 input:focus{border-color:var(--p)}
 </style>
+</head>
+<body>
 
 <div id="app"></div>
 
 <script>
 const C={p:"#2563EB",pd:"#1D4ED8",pl:"#EFF6FF",pm:"#BFDBFE",ac:"#06B6D4",su:"#10B981",wa:"#F59E0B",da:"#EF4444",tx:"#0F172A",tm:"#475569",tl:"#94A3B8",bo:"#E2E8F0",bg:"#F8FAFC"};
 
-let state={page:"home",obStep:0,bizType:null,tone:"professional",connected:false,tpl:0,bizName:"",autoOn:true,sideActive:"dashboard",search:""};
+let state={
+  page:"home",obStep:0,bizType:null,tone:"professional",connected:false,tpl:0,bizName:"",autoOn:true,sideActive:"dashboard",search:"",
+  token:localStorage.getItem("flowpilot_token")||"",user:null,dashboard:null,templates:[],loading:false,error:""
+};
 
 function setState(updates){Object.assign(state,updates);render();}
+
+function escapeHtml(value){
+  return String(value ?? "").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+}
+
+async function api(path,options={}){
+  const headers={"Content-Type":"application/json",...(options.headers||{})};
+  if(state.token) headers.Authorization=`Bearer ${state.token}`;
+  const res=await fetch(path,{...options,headers});
+  const body=await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(body.error||`Request failed: ${res.status}`);
+  return body;
+}
+
+async function createAccount(){
+  const name=document.getElementById("signup-name")?.value.trim();
+  const email=document.getElementById("signup-email")?.value.trim();
+  const password=document.getElementById("signup-password")?.value;
+  if(!name||!email||!password) return setState({error:"Please enter your name, email, and password."});
+  try{
+    setState({loading:true,error:""});
+    const data=await api("/api/auth/signup",{method:"POST",body:JSON.stringify({name,email,password})});
+    localStorage.setItem("flowpilot_token",data.token);
+    setState({token:data.token,user:data.user,loading:false,obStep:1});
+  }catch(err){setState({loading:false,error:err.message});}
+}
+
+async function saveBusiness(){
+  const type=state.bizType!==null?BIZ[state.bizType].l.toLowerCase().replace(/\s+/g,"_"):"other";
+  try{
+    setState({loading:true,error:""});
+    await api("/api/onboarding/business",{method:"POST",body:JSON.stringify({name:state.bizName||"My Business",type,tone:state.tone})});
+    setState({loading:false,obStep:2});
+  }catch(err){setState({loading:false,error:err.message});}
+}
+
+async function connectIntegration(provider){
+  try{
+    setState({loading:true,error:""});
+    await api(`/api/integrations/${provider}/connect`,{method:"POST",body:JSON.stringify({})});
+    setState({loading:false,connected:true});
+  }catch(err){setState({loading:false,error:err.message});}
+}
+
+async function loadTemplates(){
+  try{
+    const data=await api(`/api/templates?q=${encodeURIComponent(state.search)}`);
+    setState({templates:data.templates});
+  }catch(err){setState({error:err.message});}
+}
+
+async function activateTemplate(templateId){
+  const fallback=["tpl_lead_follow_up","tpl_invoice_reminder","tpl_support_triage"];
+  try{
+    setState({loading:true,error:""});
+    await api("/api/workflows/from-template",{method:"POST",body:JSON.stringify({templateId:templateId||fallback[state.tpl]||fallback[0]})});
+    setState({loading:false,obStep:4,dashboard:null});
+  }catch(err){setState({loading:false,error:err.message});}
+}
+
+async function loadDashboard(){
+  if(!state.token) return;
+  try{
+    setState({loading:true,error:""});
+    const dashboard=await api("/api/dashboard");
+    setState({dashboard,user:dashboard.user,loading:false});
+  }catch(err){setState({loading:false,error:err.message,page:"signup",obStep:0});}
+}
+
+function goDashboard(){
+  setState({page:"dashboard",sideActive:"dashboard"});
+  loadDashboard();
+}
+
+async function togglePrimaryWorkflow(){
+  const workflow=state.dashboard?.workflows?.[0];
+  if(!workflow) return setState({autoOn:!state.autoOn});
+  const status=workflow.status==="active"?"paused":"active";
+  try{
+    const data=await api(`/api/workflows/${workflow.id}`,{method:"PATCH",body:JSON.stringify({status})});
+    const dashboard={...state.dashboard,workflows:[data.workflow,...state.dashboard.workflows.slice(1)]};
+    setState({dashboard,autoOn:status==="active"});
+  }catch(err){setState({error:err.message});}
+}
+
+function useTemplate(templateId){
+  setState({page:"signup",obStep:3,tpl:0});
+  if(templateId) activateTemplate(templateId);
+}
 
 function svg(d,size=18,color="currentColor",sw=2){
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
@@ -74,7 +174,7 @@ const I={
 
 function navBrand(goHome){
   return `<div class="nav-brand" onclick="setState({page:'home'})">
-    <div class="nav-icon">${svg(I.bolt,16,'#fff',2.5)}</div>FlowDesk
+    <div class="nav-icon">${svg(I.bolt,16,'#fff',2.5)}</div>FlowPilot
   </div>`;
 }
 
@@ -94,11 +194,11 @@ function topNav(showLinks=true){
 function dashNav(){
   return `<nav class="nav" style="padding-left:0">
     <div style="width:200px;padding:0 18px;display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;flex-shrink:0">
-      <div class="nav-icon" style="width:28px;height:28px;border-radius:6px">${svg(I.bolt,14,'#fff',2.5)}</div>FlowDesk
+      <div class="nav-icon" style="width:28px;height:28px;border-radius:6px">${svg(I.bolt,14,'#fff',2.5)}</div>FlowPilot
     </div>
     <div style="flex:1"></div>
     <div style="display:flex;align-items:center;gap:12px;padding-right:24px">
-      <div style="font-size:13px;color:${C.tm};background:${C.bg};padding:6px 12px;border-radius:8px;border:1px solid ${C.bo}">📅 May 23, 2026</div>
+      <div style="font-size:13px;color:${C.tm};background:${C.bg};padding:6px 12px;border-radius:8px;border:1px solid ${C.bo}">ðŸ“… May 23, 2026</div>
       <div style="width:32px;height:32px;border-radius:50%;background:${C.pl};display:flex;align-items:center;justify-content:center">${svg(I.user,15,C.p)}</div>
     </div>
   </nav>`;
@@ -122,7 +222,7 @@ function sidebar(active){
   }).join('');
   return `<div class="sidebar">
     <div style="padding:0 18px 14px;border-bottom:1px solid ${C.bo};margin-bottom:8px;display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700">
-      <div class="nav-icon" style="width:28px;height:28px;border-radius:6px">${svg(I.bolt,14,'#fff',2.5)}</div>FlowDesk
+      <div class="nav-icon" style="width:28px;height:28px;border-radius:6px">${svg(I.bolt,14,'#fff',2.5)}</div>FlowPilot
     </div>
     ${items}
     <div style="flex:1"></div>
@@ -134,14 +234,14 @@ function sidebar(active){
   </div>`;
 }
 
-// ── HOME ──
+// â”€â”€ HOME â”€â”€
 function homePage(){
   const feats=[
     {icon:I.clock,title:"Save Time",desc:"Automate repetitive tasks and reduce manual work across your business."},
     {icon:I.trending,title:"Increase Productivity",desc:"Streamline processes and get more done, faster, with less effort."},
     {icon:I.shield,title:"Reduce Errors",desc:"Minimize human errors with reliable, AI-powered automations."},
   ];
-  const stats=[{n:"4 min",l:"to first automation"},{n:"12h+",l:"saved per week"},{n:"10,000+",l:"founders using FlowDesk"},{n:"99.9%",l:"uptime guaranteed"}];
+  const stats=[{n:"4 min",l:"to first automation"},{n:"12h+",l:"saved per week"},{n:"10,000+",l:"founders using FlowPilot"},{n:"99.9%",l:"uptime guaranteed"}];
 
   return `<div style="min-height:100vh;background:${C.bg}">
     ${topNav(true)}
@@ -153,7 +253,7 @@ function homePage(){
         Automate workflows.<br/><span style="color:${C.p}">Grow your business.</span>
       </h1>
       <p style="font-size:17px;color:${C.tm};max-width:460px;margin:0 auto 32px;line-height:1.65">
-        FlowDesk helps founders automate repetitive tasks, save time, and focus on what matters most.
+        FlowPilot helps founders automate repetitive tasks, save time, and focus on what matters most.
       </p>
       <div style="display:flex;justify-content:center;gap:12px;margin-bottom:52px">
         <button class="btn-p" style="padding:13px 26px;font-size:15px" onclick="setState({page:'signup',obStep:0})">Start Free Trial ${svg(I.arrow,16,'#fff')}</button>
@@ -167,7 +267,7 @@ function homePage(){
             <div style="width:10px;height:10px;border-radius:50%;background:#10B981"></div>
           </div>
           <div style="padding:20px 24px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-            ${[["Active Automations","24","↑ 12% vs yesterday","#10B981"],["Leads Processed","1,245","↑ 18% vs yesterday","#10B981"],["Time Saved","12h 45m","↑ 25% vs last week","#10B981"]].map(([l,v,d,c])=>`
+            ${[["Active Automations","24","â†‘ 12% vs yesterday","#10B981"],["Leads Processed","1,245","â†‘ 18% vs yesterday","#10B981"],["Time Saved","12h 45m","â†‘ 25% vs last week","#10B981"]].map(([l,v,d,c])=>`
               <div style="background:#fff;border:1px solid ${C.bo};border-radius:10px;padding:16px">
                 <div style="font-size:10.5px;color:${C.tl};margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em;font-weight:600">${l}</div>
                 <div style="font-size:22px;font-weight:700;color:${C.tx};margin-bottom:6px">${v}</div>
@@ -187,7 +287,7 @@ function homePage(){
     </div>
     <div style="max-width:900px;margin:0 auto;padding:68px 24px">
       <div style="text-align:center;margin-bottom:44px">
-        <div style="font-size:11.5px;font-weight:700;color:${C.p};letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px">Why FlowDesk</div>
+        <div style="font-size:11.5px;font-weight:700;color:${C.p};letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px">Why FlowPilot</div>
         <h2 style="font-size:32px;font-weight:800;letter-spacing:-0.02em">Everything you need to automate</h2>
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px">
@@ -204,11 +304,11 @@ function homePage(){
   </div>`;
 }
 
-// ── SIGNUP / ONBOARDING ──
+// â”€â”€ SIGNUP / ONBOARDING â”€â”€
 const BIZ=[
-  {e:"🏢",l:"Agency",d:"Client services"},{e:"🛍️",l:"E-commerce",d:"Online store"},
-  {e:"🛠️",l:"Service biz",d:"Freelance / local"},{e:"🚀",l:"Startup",d:"Early-stage"},
-  {e:"👤",l:"Solo founder",d:"One-person show"},{e:"📦",l:"Other",d:"Something else"},
+  {e:"ðŸ¢",l:"Agency",d:"Client services"},{e:"ðŸ›ï¸",l:"E-commerce",d:"Online store"},
+  {e:"ðŸ› ï¸",l:"Service biz",d:"Freelance / local"},{e:"ðŸš€",l:"Startup",d:"Early-stage"},
+  {e:"ðŸ‘¤",l:"Solo founder",d:"One-person show"},{e:"ðŸ“¦",l:"Other",d:"Something else"},
 ];
 const OB_STEPS=[
   {n:1,l:"Create Account",d:"Add your basic details"},
@@ -242,16 +342,17 @@ function signupPage(){
           </div>
           <div class="card page-anim" style="animation-delay:.1s">
             <h3 style="font-size:20px;font-weight:700;margin:0 0 5px">Create your account</h3>
-            <p style="font-size:13.5px;color:${C.tm};margin:0 0 22px">Start your free trial — 50 automations/month free.</p>
-            ${[["Full name","text","Alex Johnson","name"],["Work email","email","alex@company.com","email"],["Password","password","Min. 8 characters","password"]].map(([l,t,ph,k])=>`
+            <p style="font-size:13.5px;color:${C.tm};margin:0 0 22px">Start your free trial â€” 50 automations/month free.</p>
+            ${[["Full name","text","Alex Johnson","signup-name"],["Work email","email","alex@company.com","signup-email"],["Password","password","Min. 8 characters","signup-password"]].map(([l,t,ph,k])=>`
               <div style="margin-bottom:14px">
                 <label style="display:block;font-size:11.5px;font-weight:600;color:${C.tm};margin-bottom:5px;text-transform:uppercase;letter-spacing:.06em">${l}</label>
-                <input type="${t}" placeholder="${ph}" style="width:100%;box-sizing:border-box"/>
+                <input id="${k}" type="${t}" placeholder="${ph}" style="width:100%;box-sizing:border-box"/>
               </div>`).join('')}
-            <button class="btn-p" style="width:100%;justify-content:center;padding:12px;font-size:15px;margin-top:8px" onclick="setState({page:'signup',obStep:1})">
-              Create Account ${svg(I.arrow,16,'#fff')}
+            ${state.error?`<div style="font-size:12.5px;color:${C.da};margin:-2px 0 12px">${escapeHtml(state.error)}</div>`:''}
+            <button class="btn-p" style="width:100%;justify-content:center;padding:12px;font-size:15px;margin-top:8px" onclick="createAccount()" ${state.loading?'disabled':''}>
+              ${state.loading?'Creating...':`Create Account ${svg(I.arrow,16,'#fff')}`}
             </button>
-            <p style="font-size:12.5px;color:${C.tl};text-align:center;margin-top:14px">Already have an account? <span style="color:${C.p};cursor:pointer;font-weight:600" onclick="setState({page:'dashboard'})">Sign in</span></p>
+            <p style="font-size:12.5px;color:${C.tl};text-align:center;margin-top:14px">Already have an account? <span style="color:${C.p};cursor:pointer;font-weight:600" onclick="goDashboard()">Open dashboard</span></p>
           </div>
         </div>
       </div>
@@ -279,7 +380,7 @@ function signupPage(){
       <p style="font-size:14px;color:${C.tm};margin:0 0 20px">We'll personalize your experience to match your needs.</p>
       <div style="margin-bottom:16px">
         <label style="display:block;font-size:11.5px;font-weight:600;color:${C.tm};text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Business name</label>
-        <input type="text" placeholder="Nova Creative Studio" id="biz-name" value="${state.bizName}" oninput="state.bizName=this.value" style="width:100%;box-sizing:border-box"/>
+        <input type="text" placeholder="Nova Creative Studio" id="biz-name" value="${escapeHtml(state.bizName)}" oninput="state.bizName=this.value" style="width:100%;box-sizing:border-box"/>
       </div>
       <div style="margin-bottom:20px">
         <label style="display:block;font-size:11.5px;font-weight:600;color:${C.tm};text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Business type</label>
@@ -291,42 +392,44 @@ function signupPage(){
           </button>`).join('')}
         </div>
       </div>
-      <button class="btn-p" style="width:100%;justify-content:center;padding:12px" onclick="setState({obStep:2})">Continue ${svg(I.arrow,16,'#fff')}</button>
+      ${state.error?`<div style="font-size:12.5px;color:${C.da};margin:0 0 12px">${escapeHtml(state.error)}</div>`:''}
+      <button class="btn-p" style="width:100%;justify-content:center;padding:12px" onclick="saveBusiness()" ${state.loading?'disabled':''}>${state.loading?'Saving...':`Continue ${svg(I.arrow,16,'#fff')}`}</button>
     </div>`;
   }
 
   if(state.obStep===2){
-    const tools=[["📧","Gmail","Monitor & send emails","#EA4335"],["💬","WhatsApp Business","Route WhatsApp messages","#25D366"],["🗂️","HubSpot CRM","Auto-log leads","#FF7A59"]];
+    const tools=[["ðŸ“§","Gmail","Monitor & send emails","#EA4335"],["ðŸ’¬","WhatsApp Business","Route WhatsApp messages","#25D366"],["ðŸ—‚ï¸","HubSpot CRM","Auto-log leads","#FF7A59"]];
     stepContent=`<div class="card page-anim" style="max-width:520px;margin:0 auto">
       <div style="font-size:11px;font-weight:700;color:${C.p};letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Step 2 of 4</div>
       <h2 style="font-size:22px;font-weight:800;margin:0 0 6px;letter-spacing:-0.02em">Connect your tools</h2>
-      <p style="font-size:14px;color:${C.tm};margin:0 0 20px">FlowDesk watches for new leads so you don't have to.</p>
+      <p style="font-size:14px;color:${C.tm};margin:0 0 20px">FlowPilot watches for new leads so you don't have to.</p>
       ${tools.map(([ic,nm,dc,cl],i)=>`
-        <div onclick="${i===0?'setState({connected:!state.connected})':''}" style="display:flex;align-items:center;gap:14px;padding:14px 16px;border:1.5px solid ${i===0&&state.connected?C.p:C.bo};border-radius:10px;margin-bottom:10px;cursor:pointer;background:${i===0&&state.connected?C.pl:'transparent'};transition:all .2s"
+        <div onclick="${i===0?'connectIntegration(`gmail`)':''}" style="display:flex;align-items:center;gap:14px;padding:14px 16px;border:1.5px solid ${i===0&&state.connected?C.p:C.bo};border-radius:10px;margin-bottom:10px;cursor:pointer;background:${i===0&&state.connected?C.pl:'transparent'};transition:all .2s"
           onmouseenter="this.style.borderColor='${C.pm}'" onmouseleave="this.style.borderColor='${i===0&&state.connected?C.p:C.bo}'">
           <div style="width:38px;height:38px;border-radius:8px;background:#F1F5F9;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">${ic}</div>
           <div style="flex:1">
             <div style="font-size:14px;font-weight:600">${nm}</div>
             <div style="font-size:12px;color:${C.tm};margin-top:2px">${dc}</div>
           </div>
-          <div style="font-size:12px;font-weight:600;color:${i===0&&state.connected?C.su:C.p};flex-shrink:0">${i===0?(state.connected?'✓ Connected':'Connect'):'Connect'}</div>
+          <div style="font-size:12px;font-weight:600;color:${i===0&&state.connected?C.su:C.p};flex-shrink:0">${i===0?(state.connected?'âœ“ Connected':'Connect'):'Connect'}</div>
         </div>`).join('')}
-      <p style="font-size:12px;color:${C.tl};text-align:center;margin:6px 0 18px;cursor:pointer;text-decoration:underline" onclick="setState({obStep:3})">Skip — add integrations later in settings</p>
+      <p style="font-size:12px;color:${C.tl};text-align:center;margin:6px 0 18px;cursor:pointer;text-decoration:underline" onclick="setState({obStep:3})">Skip â€” add integrations later in settings</p>
+      ${state.error?`<div style="font-size:12.5px;color:${C.da};margin:0 0 12px">${escapeHtml(state.error)}</div>`:''}
       <button class="btn-p" style="width:100%;justify-content:center;padding:12px" onclick="setState({obStep:3})">Continue ${svg(I.arrow,16,'#fff')}</button>
-      <button class="btn-g" style="width:100%;margin-top:8px" onclick="setState({obStep:1})">← Back</button>
+      <button class="btn-g" style="width:100%;margin-top:8px" onclick="setState({obStep:1})">â† Back</button>
     </div>`;
   }
 
   if(state.obStep===3){
     const tpls=[
-      {ic:"📩",t:"Lead Follow-Up",d:"AI drafts a personalized reply within minutes of a new inquiry.",badge:"Recommended"},
-      {ic:"🔔",t:"Payment Reminder",d:"Automatically nudge overdue invoices with polite, on-brand reminders."},
-      {ic:"🎫",t:"Support Triage",d:"Classify and route incoming support emails to the right person."},
+      {ic:"ðŸ“©",t:"Lead Follow-Up",d:"AI drafts a personalized reply within minutes of a new inquiry.",badge:"Recommended"},
+      {ic:"ðŸ””",t:"Payment Reminder",d:"Automatically nudge overdue invoices with polite, on-brand reminders."},
+      {ic:"ðŸŽ«",t:"Support Triage",d:"Classify and route incoming support emails to the right person."},
     ];
     stepContent=`<div class="card page-anim" style="max-width:520px;margin:0 auto">
       <div style="font-size:11px;font-weight:700;color:${C.p};letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Step 3 of 4</div>
       <h2 style="font-size:22px;font-weight:800;margin:0 0 6px;letter-spacing:-0.02em">Choose your first template</h2>
-      <p style="font-size:14px;color:${C.tm};margin:0 0 18px">Pick one to activate — you can add more any time.</p>
+      <p style="font-size:14px;color:${C.tm};margin:0 0 18px">Pick one to activate â€” you can add more any time.</p>
       ${tpls.map((t,i)=>`
         <div onclick="setState({tpl:${i}})" style="display:flex;gap:14px;padding:14px 16px;border:1.5px solid ${state.tpl===i?C.p:C.bo};border-radius:10px;margin-bottom:10px;cursor:pointer;background:${state.tpl===i?C.pl:'transparent'};transition:all .15s">
           <div style="width:38px;height:38px;border-radius:8px;background:${state.tpl===i?C.pm:'#F1F5F9'};display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">${t.ic}</div>
@@ -338,15 +441,16 @@ function signupPage(){
             <div style="font-size:12.5px;color:${C.tm};line-height:1.5">${t.d}</div>
           </div>
         </div>`).join('')}
-      <button class="btn-p" style="width:100%;justify-content:center;padding:12px;margin-top:8px" onclick="setState({obStep:4})">Activate template ${svg(I.arrow,16,'#fff')}</button>
-      <button class="btn-g" style="width:100%;margin-top:8px" onclick="setState({obStep:2})">← Back</button>
+      ${state.error?`<div style="font-size:12.5px;color:${C.da};margin:0 0 12px">${escapeHtml(state.error)}</div>`:''}
+      <button class="btn-p" style="width:100%;justify-content:center;padding:12px;margin-top:8px" onclick="activateTemplate()" ${state.loading?'disabled':''}>${state.loading?'Activating...':`Activate template ${svg(I.arrow,16,'#fff')}`}</button>
+      <button class="btn-g" style="width:100%;margin-top:8px" onclick="setState({obStep:2})">â† Back</button>
     </div>`;
   }
 
   if(state.obStep===4){
     const name=state.bizName||(state.bizType!==null?BIZ[state.bizType].l:'Your business');
     stepContent=`<div class="card page-anim" style="max-width:480px;margin:0 auto;text-align:center">
-      <div style="width:60px;height:60px;border-radius:50%;background:#D1FAE5;border:2px solid ${C.su};display:flex;align-items:center;justify-content:center;margin:0 auto 18px;font-size:24px">✓</div>
+      <div style="width:60px;height:60px;border-radius:50%;background:#D1FAE5;border:2px solid ${C.su};display:flex;align-items:center;justify-content:center;margin:0 auto 18px;font-size:24px">âœ“</div>
       <div style="font-size:11px;font-weight:700;color:${C.su};letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">You're all set!</div>
       <h2 style="font-size:22px;font-weight:800;margin:0 0 8px;letter-spacing:-0.02em">${name} is live</h2>
       <p style="font-size:14px;color:${C.tm};margin:0 0 22px;line-height:1.6">Your lead follow-up automation is active. The next inquiry in your inbox will get an AI-drafted reply within 60 seconds.</p>
@@ -357,7 +461,7 @@ function signupPage(){
             <div style="font-size:11.5px;color:${C.tm};margin-top:4px">${l}</div>
           </div>`).join('')}
       </div>
-      <button class="btn-p" style="padding:12px 28px;font-size:15px" onclick="setState({page:'dashboard',sideActive:'dashboard'})">Go to Dashboard ${svg(I.arrow,16,'#fff')}</button>
+      <button class="btn-p" style="padding:12px 28px;font-size:15px" onclick="goDashboard()">Go to Dashboard ${svg(I.arrow,16,'#fff')}</button>
     </div>`;
   }
 
@@ -373,7 +477,7 @@ function signupPage(){
   </div>`;
 }
 
-// ── DASHBOARD ──
+// â”€â”€ DASHBOARD â”€â”€
 const ACTIVITY=[
   {t:"2 min ago",l:"Sarah Chen",a:"AI draft sent",s:"success",src:"Gmail"},
   {t:"14 min ago",l:"Raj Patel",a:"Awaiting approval",s:"pending",src:"Typeform"},
@@ -383,21 +487,37 @@ const ACTIVITY=[
 ];
 
 function dashPage(){
+  if(!state.token) return signupPage();
+  if(!state.dashboard&&!state.loading) setTimeout(loadDashboard,0);
+  const dash=state.dashboard||{metrics:{activeAutomations:0,leadsProcessedToday:0,pendingApprovals:0,errors:0,timeSavedMinutesThisWeek:0,successRate:100},workflows:[],activity:[]};
+  const metrics=dash.metrics;
+  const firstWorkflow=dash.workflows[0];
+  const displayName=(dash.user?.name||state.user?.name||"there").split(" ")[0];
+  const minutes=metrics.timeSavedMinutesThisWeek||0;
+  const timeSaved=`${Math.floor(minutes/60)}h ${minutes%60}m`;
+  const recent=dash.activity.length?dash.activity.map(item=>({
+    l:item.label||item.type,
+    a:item.type||"Activity",
+    src:item.source||"system",
+    t:new Date(item.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}),
+    s:item.status==="pending"?"pending":item.status==="error"?"danger":"success"
+  })):ACTIVITY;
   return `<div style="min-height:100vh;background:${C.bg}">
     ${dashNav()}
     <div style="display:flex">
       ${sidebar(state.sideActive)}
       <div style="flex:1;padding:28px 32px;overflow-y:auto" class="page-anim">
         <div style="margin-bottom:22px">
-          <h1 style="font-size:22px;font-weight:800;margin:0 0 4px;letter-spacing:-0.02em">Welcome back, Alex 👋</h1>
+          <h1 style="font-size:22px;font-weight:800;margin:0 0 4px;letter-spacing:-0.02em">Welcome back, ${escapeHtml(displayName)}</h1>
           <p style="font-size:13.5px;color:${C.tm};margin:0">Here's what's happening with your automations today.</p>
+          ${state.error?`<div style="font-size:12.5px;color:${C.da};margin-top:8px">${escapeHtml(state.error)}</div>`:''}
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
           ${[
-            [I.bolt,C.su,"Active Automations","24","↑ 12% vs yesterday","su"],
-            [I.leads,C.p,"Leads Processed Today","1,245","↑ 18% vs yesterday","su"],
-            [I.alert,C.wa,"Pending Approvals","8",null,"wa","View and take action"],
-            [I.x,C.da,"Errors","2",null,"da","View error logs"],
+            [I.bolt,C.su,"Active Automations",metrics.activeAutomations,"Live from backend","su"],
+            [I.leads,C.p,"Leads Processed Today",metrics.leadsProcessedToday,"Tracked from lead intake","su"],
+            [I.alert,C.wa,"Pending Approvals",metrics.pendingApprovals,null,"wa","View and take action"],
+            [I.x,C.da,"Errors",metrics.errors,null,"da","View error logs"],
           ].map(([ic,cl,l,v,dt,st2,lnk])=>`
             <div class="stat-card">
               <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
@@ -415,36 +535,36 @@ function dashPage(){
               <div style="width:36px;height:36px;border-radius:8px;background:#EDE9FE;display:flex;align-items:center;justify-content:center">${svg(I.clock,17,'#7C3AED')}</div>
               <span style="font-size:11.5px;color:${C.tl};font-weight:600;text-transform:uppercase;letter-spacing:.05em">Time Saved (This Week)</span>
             </div>
-            <div style="font-size:30px;font-weight:800;letter-spacing:-0.02em">12h 45m</div>
-            <div style="font-size:12px;color:${C.su};font-weight:600;margin-top:6px">↑ 25% vs last week</div>
+            <div style="font-size:30px;font-weight:800;letter-spacing:-0.02em">${timeSaved}</div>
+            <div style="font-size:12px;color:${C.su};font-weight:600;margin-top:6px">${metrics.successRate||100}% automation success rate</div>
           </div>
           <div class="card">
-            <div style="font-size:13.5px;font-weight:700;margin-bottom:14px">Lead Follow-Up Automation</div>
+            <div style="font-size:13.5px;font-weight:700;margin-bottom:14px">${escapeHtml(firstWorkflow?.name||"Lead Follow-Up Automation")}</div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
               <span style="font-size:13px;color:${C.tm}">Status</span>
-              <button class="toggle" style="background:${state.autoOn?C.p:C.bo}" onclick="setState({autoOn:!state.autoOn})">
-                <div class="toggle-knob" style="left:${state.autoOn?'23px':'3px'}"></div>
+              <button class="toggle" style="background:${(firstWorkflow?.status||'active')==='active'?C.p:C.bo}" onclick="togglePrimaryWorkflow()">
+                <div class="toggle-knob" style="left:${(firstWorkflow?.status||'active')==='active'?'23px':'3px'}"></div>
               </button>
             </div>
-            <div style="font-size:12px;color:${state.autoOn?C.su:C.tl};font-weight:600">${state.autoOn?'● Active — monitoring inbox':'○ Paused'}</div>
-            <div style="font-size:12px;color:${C.tm};margin-top:8px">Connected: Gmail · 1,245 runs total</div>
+            <div style="font-size:12px;color:${(firstWorkflow?.status||'active')==='active'?C.su:C.tl};font-weight:600">${(firstWorkflow?.status||'active')==='active'?'Active - monitoring inbox':'Paused'}</div>
+            <div style="font-size:12px;color:${C.tm};margin-top:8px">Connected: Gmail - ${firstWorkflow?.runs||0} runs total</div>
           </div>
         </div>
         <div class="card">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
             <h3 style="font-size:15px;font-weight:700;margin:0">Recent Activity</h3>
-            <span style="font-size:12.5px;color:${C.p};cursor:pointer;font-weight:600">View all →</span>
+            <span style="font-size:12.5px;color:${C.p};cursor:pointer;font-weight:600">View all â†’</span>
           </div>
           <table style="width:100%;border-collapse:collapse">
             <thead><tr>
               ${["Lead","Action","Source","Time","Status"].map(h=>`<th style="font-size:10.5px;font-weight:700;color:${C.tl};text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:0 12px 10px 0;border-bottom:1px solid ${C.bo}">${h}</th>`).join('')}
             </tr></thead>
             <tbody>
-              ${ACTIVITY.map(r=>`<tr>
-                <td style="padding:11px 12px 11px 0;font-size:13.5px;font-weight:600;border-bottom:1px solid ${C.bg}">${r.l}</td>
-                <td style="padding:11px 12px 11px 0;font-size:13px;color:${C.tm};border-bottom:1px solid ${C.bg}">${r.a}</td>
-                <td style="padding:11px 12px 11px 0;border-bottom:1px solid ${C.bg}"><span class="badge badge-p">${r.src}</span></td>
-                <td style="padding:11px 12px 11px 0;font-size:12px;color:${C.tl};border-bottom:1px solid ${C.bg}">${r.t}</td>
+              ${recent.map(r=>`<tr>
+                <td style="padding:11px 12px 11px 0;font-size:13.5px;font-weight:600;border-bottom:1px solid ${C.bg}">${escapeHtml(r.l)}</td>
+                <td style="padding:11px 12px 11px 0;font-size:13px;color:${C.tm};border-bottom:1px solid ${C.bg}">${escapeHtml(r.a)}</td>
+                <td style="padding:11px 12px 11px 0;border-bottom:1px solid ${C.bg}"><span class="badge badge-p">${escapeHtml(r.src)}</span></td>
+                <td style="padding:11px 12px 11px 0;font-size:12px;color:${C.tl};border-bottom:1px solid ${C.bg}">${escapeHtml(r.t)}</td>
                 <td style="padding:11px 0 11px 0;border-bottom:1px solid ${C.bg}"><span class="badge badge-${r.s==='success'?'s':r.s==='pending'?'w':'d'}">${r.s==='success'?'Sent':r.s==='pending'?'Pending':'Error'}</span></td>
               </tr>`).join('')}
             </tbody>
@@ -455,19 +575,29 @@ function dashPage(){
   </div>`;
 }
 
-// ── TEMPLATES ──
+// â”€â”€ TEMPLATES â”€â”€
 const TPLS=[
-  {ic:"📩",bg:"#EFF6FF",title:"Lead Follow-up",desc:"Automatically follow up with new leads and nurture relationships.",tag:"Most Popular"},
-  {ic:"🧾",bg:"#FFF7ED",title:"Invoice Reminder",desc:"Send automated invoice reminders and track payments easily."},
-  {ic:"🎧",bg:"#F0FDF4",title:"Support Triage",desc:"Automatically triage and assign support tickets to the right team."},
-  {ic:"💬",bg:"#F0FDF4",title:"WhatsApp Routing",desc:"Route WhatsApp messages to the right team or team member."},
-  {ic:"📅",bg:"#FDF4FF",title:"Meeting Follow-Up",desc:"Send personalized follow-ups after every call or demo automatically."},
-  {ic:"🔄",bg:"#FFF1F2",title:"CRM Auto-Update",desc:"Sync lead data to your CRM automatically on every interaction."},
+  {ic:"ðŸ“©",bg:"#EFF6FF",title:"Lead Follow-up",desc:"Automatically follow up with new leads and nurture relationships.",tag:"Most Popular"},
+  {ic:"ðŸ§¾",bg:"#FFF7ED",title:"Invoice Reminder",desc:"Send automated invoice reminders and track payments easily."},
+  {ic:"ðŸŽ§",bg:"#F0FDF4",title:"Support Triage",desc:"Automatically triage and assign support tickets to the right team."},
+  {ic:"ðŸ’¬",bg:"#F0FDF4",title:"WhatsApp Routing",desc:"Route WhatsApp messages to the right team or team member."},
+  {ic:"ðŸ“…",bg:"#FDF4FF",title:"Meeting Follow-Up",desc:"Send personalized follow-ups after every call or demo automatically."},
+  {ic:"ðŸ”„",bg:"#FFF1F2",title:"CRM Auto-Update",desc:"Sync lead data to your CRM automatically on every interaction."},
 ];
 
 function templatesPage(){
+  if(!state.templates.length&&!state.loading) setTimeout(loadTemplates,0);
+  const apiTemplates=state.templates.map((t,i)=>({
+    id:t.id,
+    ic:TPLS[i]?.ic||"âš¡",
+    bg:TPLS[i]?.bg||"#EFF6FF",
+    title:t.title,
+    desc:t.description,
+    tag:t.recommended?"Most Popular":""
+  }));
   const q=state.search.toLowerCase();
-  const filtered=TPLS.filter(t=>!q||t.title.toLowerCase().includes(q)||t.desc.toLowerCase().includes(q));
+  const source=apiTemplates.length?apiTemplates:TPLS;
+  const filtered=source.filter(t=>!q||t.title.toLowerCase().includes(q)||t.desc.toLowerCase().includes(q));
   return `<div style="min-height:100vh;background:${C.bg}">
     ${dashNav()}
     <div style="display:flex">
@@ -480,7 +610,7 @@ function templatesPage(){
           </div>
           <div style="position:relative">
             <div style="position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none">${svg(I.search,15,C.tl)}</div>
-            <input type="search" placeholder="Search templates..." value="${state.search}" oninput="setState({search:this.value})"
+            <input type="search" placeholder="Search templates..." value="${escapeHtml(state.search)}" oninput="setState({search:this.value})"
               style="padding:9px 12px 9px 34px;border:1px solid ${C.bo};border-radius:8px;font-size:13.5px;outline:none;font-family:inherit;width:210px;color:${C.tx}"/>
           </div>
         </div>
@@ -490,17 +620,17 @@ function templatesPage(){
               <div style="width:44px;height:44px;border-radius:10px;background:${t.bg};display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">${t.ic}</div>
               <div style="flex:1">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-                  <span style="font-size:15px;font-weight:700">${t.title}</span>
+                  <span style="font-size:15px;font-weight:700">${escapeHtml(t.title)}</span>
                   ${t.tag?`<span class="badge badge-p">${t.tag}</span>`:''}
                 </div>
-                <p style="font-size:12.5px;color:${C.tm};margin:0 0 12px;line-height:1.5">${t.desc}</p>
-                <button class="btn-o" style="padding:7px 14px;font-size:12.5px" onclick="setState({page:'signup',obStep:0})">Use Template ${svg(I.arrow,13,'currentColor')}</button>
+                <p style="font-size:12.5px;color:${C.tm};margin:0 0 12px;line-height:1.5">${escapeHtml(t.desc)}</p>
+                <button class="btn-o" style="padding:7px 14px;font-size:12.5px" onclick="${state.token&&t.id?`activateTemplate('${t.id}')`:`setState({page:'signup',obStep:0})`}">Use Template ${svg(I.arrow,13,'currentColor')}</button>
               </div>
             </div>`).join('')}
         </div>
-        ${filtered.length===0?`<div style="text-align:center;padding:60px 24px;color:${C.tl}"><div style="font-size:36px;margin-bottom:12px">🔍</div><div style="font-size:15px;font-weight:600;color:${C.tm}">No templates found for "${state.search}"</div></div>`:''}
+        ${filtered.length===0?`<div style="text-align:center;padding:60px 24px;color:${C.tl}"><div style="font-size:36px;margin-bottom:12px">ðŸ”</div><div style="font-size:15px;font-weight:600;color:${C.tm}">No templates found for "${state.search}"</div></div>`:''}
         <div style="text-align:center;margin-top:28px">
-          <span style="font-size:13.5px;color:${C.p};font-weight:600;cursor:pointer">Browse all templates →</span>
+          <span style="font-size:13.5px;color:${C.p};font-weight:600;cursor:pointer">Browse all templates â†’</span>
         </div>
       </div>
     </div>
@@ -517,3 +647,5 @@ function render(){
 
 render();
 </script>
+</body>
+</html>

@@ -3,9 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "description": "AI-powered workflow automation platform for businesses.",
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "start": "node backend/server.js",
     "dev": "node backend/server.js",
+    "dev:api": "node backend/server.js",
+    "dev:web": "npm run dev --workspace apps/web",
+    "build:web": "npm run build --workspace apps/web",
+    "lint:web": "npm run lint --workspace apps/web",
     "test": "node backend/test.js"
   },
   "engines": {

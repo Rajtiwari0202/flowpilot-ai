@@ -52,3 +52,17 @@ node backend/test.js
 4. Add your Supabase URL and anonymous key.
 
 The backend still uses the local JSON store while the Supabase repositories and Auth migration are built incrementally.
+
+## Local MVP Demo
+
+The Next.js workspace now supports a complete local demonstration:
+
+1. Create an account or log in.
+2. Add a business profile.
+3. Activate the Lead Follow-up template.
+4. Capture a test lead.
+5. Review and edit the generated follow-up draft.
+6. Approve the draft to simulate sending it.
+7. Confirm dashboard metrics, workflow runs, and activity logs update.
+
+External tools are still demo-mode connectors until their credentials are configured. Production rollout still requires Supabase Auth/Postgres, a real AI provider call, Gmail OAuth and sending, Stripe billing, webhook verification, and deployment configuration.

@@ -71,10 +71,28 @@ async function request(path, options = {}) {
     assert.equal(lead.response.status, 201);
     assert.equal(lead.body.approval.status, "pending");
 
+    const leadList = await request("/api/leads", { headers: auth });
+    assert.equal(leadList.response.status, 200);
+    assert.equal(leadList.body.leads.length, 1);
+
+    const approvalList = await request("/api/approvals", { headers: auth });
+    assert.equal(approvalList.response.status, 200);
+    assert.equal(approvalList.body.approvals[0].lead.name, "Sarah Chen");
+
+    const approval = await request(`/api/approvals/${lead.body.approval.id}/approve`, {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ draft: "Edited follow-up draft" })
+    });
+    assert.equal(approval.response.status, 200);
+    assert.equal(approval.body.approval.status, "approved");
+    assert.equal(approval.body.approval.draft, "Edited follow-up draft");
+
     const dashboard = await request("/api/dashboard", { headers: auth });
     assert.equal(dashboard.response.status, 200);
     assert.equal(dashboard.body.metrics.activeAutomations >= 1, true);
-    assert.equal(dashboard.body.metrics.pendingApprovals >= 1, true);
+    assert.equal(dashboard.body.metrics.pendingApprovals, 0);
+    assert.equal(dashboard.body.workflows[0].runs, 1);
 
     console.log("Backend smoke tests passed");
   } finally {

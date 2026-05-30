@@ -32,7 +32,9 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
 function verifyPassword(password, storedHash) {
   const [salt, hash] = String(storedHash).split(":");
   if (!salt || !hash) return false;
-  return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(hashPassword(password, salt).split(":")[1], "hex"));
+  const stored = Buffer.from(hash, "hex");
+  const candidate = Buffer.from(hashPassword(password, salt).split(":")[1], "hex");
+  return stored.length === candidate.length && crypto.timingSafeEqual(stored, candidate);
 }
 
 function signToken(payload) {
@@ -46,8 +48,15 @@ function verifyToken(token) {
   const [header, body, signature] = String(token || "").split(".");
   if (!header || !body || !signature) return null;
   const expected = crypto.createHmac("sha256", JWT_SECRET).update(`${header}.${body}`).digest("base64url");
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
-  const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+  const providedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return null;
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
   if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
   return payload;
 }
@@ -127,6 +136,10 @@ function dashboardFor(store, user) {
   };
 }
 
+function userRows(store, collection, userId) {
+  return store[collection].filter((item) => item.userId === userId);
+}
+
 function draftFollowUp({ leadName = "there", businessName = "our team", tone = "professional", message = "" }) {
   const opener = tone === "friendly" ? "Thanks so much for reaching out" : "Thank you for your inquiry";
   const detail = message ? ` I saw your note about "${message.slice(0, 120)}".` : "";
@@ -195,6 +208,26 @@ async function route(req, res) {
 
   if (req.method === "GET" && url.pathname === "/api/dashboard") return send(res, 200, dashboardFor(store, user));
 
+  if (req.method === "GET" && url.pathname === "/api/workflows") {
+    return send(res, 200, { workflows: userRows(store, "workflows", user.id) });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/leads") {
+    return send(res, 200, { leads: userRows(store, "leads", user.id) });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/approvals") {
+    const approvals = userRows(store, "approvals", user.id).map((approval) => ({
+      ...approval,
+      lead: store.leads.find((lead) => lead.id === approval.leadId) || null
+    }));
+    return send(res, 200, { approvals });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/integrations") {
+    return send(res, 200, { integrations: userRows(store, "integrations", user.id) });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/workflows/from-template") {
     const body = await parseBody(req);
     const template = store.templates.find((item) => item.id === body.templateId);
@@ -260,8 +293,16 @@ async function route(req, res) {
   if (req.method === "POST" && approvalMatch) {
     const approval = store.approvals.find((item) => item.id === approvalMatch[1] && item.userId === user.id);
     if (!approval) return send(res, 404, { error: "approval not found" });
+    const body = await parseBody(req);
+    if (typeof body.draft === "string" && body.draft.trim()) approval.draft = body.draft.trim();
     approval.status = approvalMatch[2] === "approve" ? "approved" : "rejected";
     approval.resolvedAt = now();
+    const lead = store.leads.find((item) => item.id === approval.leadId);
+    if (lead) lead.status = approval.status === "approved" ? "follow_up_sent" : "needs_review";
+    if (approval.status === "approved") {
+      const workflow = store.workflows.find((item) => item.userId === user.id && item.status === "active");
+      if (workflow) workflow.runs += 1;
+    }
     logActivity(store, { userId: user.id, type: `approval.${approval.status}`, label: `Draft ${approval.status}`, source: "approvals" });
     writeStore(store);
     return send(res, 200, { approval });
@@ -304,4 +345,12 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`FlowPilot API listening on http://localhost:${PORT}`);
+});
+
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use. The FlowPilot API may already be running.`);
+    process.exit(1);
+  }
+  throw error;
 });

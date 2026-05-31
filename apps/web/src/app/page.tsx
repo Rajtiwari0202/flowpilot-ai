@@ -108,6 +108,19 @@ export default function Home() {
   }, [request, token]);
 
   useEffect(() => {
+    const demo = new URLSearchParams(window.location.search).get("demo");
+    if (demo === "1") {
+      api<{ token: string }>("/api/demo/start", { method: "POST", body: "{}" })
+        .then((data) => {
+          window.localStorage.setItem("flowpilot_token", data.token);
+          setToken(data.token);
+          setPage("dashboard");
+          setNotice("Demo workspace loaded. Start with the dashboard, then review the pending approval.");
+          window.history.replaceState({}, "", "/");
+        })
+        .catch((err) => setError(err instanceof Error ? err.message : "Could not launch demo workspace"));
+      return;
+    }
     const stored = window.localStorage.getItem("flowpilot_token") || "";
     setToken(stored);
   }, []);
@@ -141,6 +154,22 @@ export default function Home() {
       setNotice(authMode === "signup" ? "Account created. Add your business details." : "Welcome back.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function launchDemo() {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await api<{ token: string; user: User }>("/api/demo/start", { method: "POST", body: "{}" });
+      saveToken(data.token);
+      setUser(data.user);
+      setPage("dashboard");
+      setNotice("Demo workspace loaded. Start with the dashboard, then review the pending approval.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not launch demo workspace");
     } finally {
       setLoading(false);
     }
@@ -180,7 +209,23 @@ export default function Home() {
     await mutate(`/api/approvals/${approval.id}/${action}`, { method: "POST", body: JSON.stringify({ draft }) }, action === "approve" ? "Draft approved and follow-up marked as sent." : "Draft rejected for review.");
   }
 
-  if (!token) return <AuthScreen mode={authMode} setMode={setAuthMode} submit={authSubmit} loading={loading} error={error} />;
+  async function resetDemo() {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await request<{ token: string }>("/api/demo/reset", { method: "POST", body: "{}" });
+      saveToken(data.token);
+      setPage("dashboard");
+      setNotice("Demo workspace reset to the recording-ready state.");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reset demo workspace");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!token) return <AuthScreen mode={authMode} setMode={setAuthMode} submit={authSubmit} launchDemo={launchDemo} loading={loading} error={error} />;
   if (!business) return <BusinessSetup submit={businessSubmit} loading={loading} error={error} user={user} />;
 
   const metrics = dashboard?.metrics || emptyMetrics;
@@ -207,9 +252,10 @@ export default function Home() {
           </nav>
           <div className="mt-8 border-t border-slate-200 pt-4">
             <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-900">
-              <div className="mb-1 font-bold">Free plan</div>
-              Local MVP mode is active.
+              <div className="mb-1 font-bold">{user?.id === "usr_demo_founder" ? "Demo workspace" : "Free plan"}</div>
+              {user?.id === "usr_demo_founder" ? "Recording-ready sample data is active." : "Local MVP mode is active."}
             </div>
+            {user?.id === "usr_demo_founder" && <button className="secondary-button mt-3 w-full" disabled={loading} onClick={resetDemo} type="button"><RefreshCw size={14} />Reset demo</button>}
           </div>
         </aside>
         <section className="min-w-0 flex-1 p-7">
@@ -240,8 +286,8 @@ function Brand() {
   return <div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-lg bg-blue-600 text-white"><Bot size={19} /></div><div><div className="text-sm font-bold">FlowPilot AI</div><div className="text-xs text-slate-500">Operations workspace</div></div></div>;
 }
 
-function AuthScreen({ mode, setMode, submit, loading, error }: { mode: AuthMode; setMode: (mode: AuthMode) => void; submit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; error: string }) {
-  return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-md"><div className="mb-6"><Brand /></div><div className="panel p-6"><h1 className="text-xl font-bold">{mode === "signup" ? "Create your FlowPilot account" : "Welcome back"}</h1><p className="mt-2 text-sm text-slate-500">Start with a lead follow-up automation for your business.</p>{error && <Banner text={error} tone="error" />}<form className="mt-5 space-y-4" onSubmit={submit}>{mode === "signup" && <Field label="Full name" name="name" placeholder="Alex Johnson" required />}<Field label="Work email" name="email" placeholder="alex@company.com" required type="email" /><Field label="Password" name="password" placeholder="Minimum 8 characters" required type="password" /><button className="primary-button w-full" disabled={loading} type="submit">{loading ? "Please wait..." : mode === "signup" ? "Create account" : "Log in"}</button></form><button className="mt-4 w-full text-sm font-semibold text-blue-600" onClick={() => setMode(mode === "signup" ? "login" : "signup")} type="button">{mode === "signup" ? "Already have an account? Log in" : "Need an account? Sign up"}</button></div></div></main>;
+function AuthScreen({ mode, setMode, submit, launchDemo, loading, error }: { mode: AuthMode; setMode: (mode: AuthMode) => void; submit: (event: FormEvent<HTMLFormElement>) => void; launchDemo: () => void; loading: boolean; error: string }) {
+  return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-md"><div className="mb-6"><Brand /></div><div className="panel p-6"><h1 className="text-xl font-bold">{mode === "signup" ? "Create your FlowPilot account" : "Welcome back"}</h1><p className="mt-2 text-sm text-slate-500">Start with a lead follow-up automation for your business.</p><button className="secondary-button mt-5 w-full border-blue-200 bg-blue-50 text-blue-700" disabled={loading} onClick={launchDemo} type="button"><Sparkles size={16} />Launch recording demo</button><div className="my-4 flex items-center gap-3 text-xs text-slate-400"><span className="h-px flex-1 bg-slate-200" />or create your own workspace<span className="h-px flex-1 bg-slate-200" /></div>{error && <Banner text={error} tone="error" />}<form className="space-y-4" onSubmit={submit}>{mode === "signup" && <Field label="Full name" name="name" placeholder="Alex Johnson" required />}<Field label="Work email" name="email" placeholder="alex@company.com" required type="email" /><Field label="Password" name="password" placeholder="Minimum 8 characters" required type="password" /><button className="primary-button w-full" disabled={loading} type="submit">{loading ? "Please wait..." : mode === "signup" ? "Create account" : "Log in"}</button></form><button className="mt-4 w-full text-sm font-semibold text-blue-600" onClick={() => setMode(mode === "signup" ? "login" : "signup")} type="button">{mode === "signup" ? "Already have an account? Log in" : "Need an account? Sign up"}</button></div></div></main>;
 }
 
 function BusinessSetup({ submit, loading, error, user }: { submit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; error: string; user: User | null }) {
@@ -254,16 +300,16 @@ function DashboardPage({ metrics, workflows, activity, setPage }: { metrics: Das
 }
 
 function AutomationsPage({ workflows, mutate }: { workflows: WorkflowRow[]; mutate: (path: string, options: RequestInit, success: string) => Promise<void> }) {
-  return <div className="space-y-3">{workflows.length ? workflows.map((row) => <article className="panel flex items-center justify-between p-5" key={row.id}><div><h2 className="font-bold">{row.name}</h2><p className="mt-1 text-sm text-slate-500">{row.runs} completed runs · {row.status}</p></div><button className="secondary-button" onClick={() => mutate(`/api/workflows/${row.id}`, { method: "PATCH", body: JSON.stringify({ status: row.status === "active" ? "paused" : "active" }) }, `Automation ${row.status === "active" ? "paused" : "resumed"}.`)} type="button">{row.status === "active" ? <Pause size={15} /> : <Play size={15} />}{row.status === "active" ? "Pause" : "Resume"}</button></article>) : <Empty text="No automations yet. Activate a template to begin." />}</div>;
+  return <div className="space-y-3">{workflows.length ? workflows.map((row) => <article className="panel flex items-center justify-between p-5" key={row.id}><div><h2 className="font-bold">{row.name}</h2><p className="mt-1 text-sm text-slate-500">{row.runs} completed runs - {row.status}</p></div><button className="secondary-button" onClick={() => mutate(`/api/workflows/${row.id}`, { method: "PATCH", body: JSON.stringify({ status: row.status === "active" ? "paused" : "active" }) }, `Automation ${row.status === "active" ? "paused" : "resumed"}.`)} type="button">{row.status === "active" ? <Pause size={15} /> : <Play size={15} />}{row.status === "active" ? "Pause" : "Resume"}</button></article>) : <Empty text="No automations yet. Activate a template to begin." />}</div>;
 }
 
 function LeadsPage({ leads, submit, loading }: { leads: Lead[]; submit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean }) {
-  return <div className="grid gap-5 xl:grid-cols-[0.9fr_1.4fr]"><form className="panel space-y-4 p-5" onSubmit={submit}><h2 className="font-bold">Capture test lead</h2><p className="text-sm text-slate-500">This simulates a website form or inbox inquiry.</p><Field label="Lead name" name="name" placeholder="Sarah Chen" required /><Field label="Email" name="email" placeholder="sarah@example.com" required type="email" /><Field label="Phone" name="phone" placeholder="+91 98765 43210" /><label className="block text-sm font-semibold">Inquiry<textarea className="input mt-2 min-h-28 resize-y" name="message" placeholder="I need help automating follow-ups for my agency." required /></label><button className="primary-button w-full" disabled={loading} type="submit"><Sparkles size={16} />{loading ? "Preparing draft..." : "Capture lead and draft reply"}</button></form><article className="panel p-5"><h2 className="font-bold">Lead inbox</h2><div className="mt-4 space-y-3">{leads.length ? leads.map((lead) => <div className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm" key={lead.id}><div><div className="font-semibold">{lead.name}</div><div className="mt-1 text-xs text-slate-500">{lead.email} · {lead.source}</div></div><Badge text={lead.status} /></div>) : <p className="text-sm text-slate-500">Your captured leads will appear here.</p>}</div></article></div>;
+  return <div className="grid gap-5 xl:grid-cols-[0.9fr_1.4fr]"><form className="panel space-y-4 p-5" onSubmit={submit}><h2 className="font-bold">Capture test lead</h2><p className="text-sm text-slate-500">This simulates a website form or inbox inquiry.</p><Field label="Lead name" name="name" placeholder="Sarah Chen" required /><Field label="Email" name="email" placeholder="sarah@example.com" required type="email" /><Field label="Phone" name="phone" placeholder="+91 98765 43210" /><label className="block text-sm font-semibold">Inquiry<textarea className="input mt-2 min-h-28 resize-y" name="message" placeholder="I need help automating follow-ups for my agency." required /></label><button className="primary-button w-full" disabled={loading} type="submit"><Sparkles size={16} />{loading ? "Preparing draft..." : "Capture lead and draft reply"}</button></form><article className="panel p-5"><h2 className="font-bold">Lead inbox</h2><div className="mt-4 space-y-3">{leads.length ? leads.map((lead) => <div className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm" key={lead.id}><div><div className="font-semibold">{lead.name}</div><div className="mt-1 text-xs text-slate-500">{lead.email} - {lead.source}</div></div><Badge text={lead.status} /></div>) : <p className="text-sm text-slate-500">Your captured leads will appear here.</p>}</div></article></div>;
 }
 
 function ApprovalsPage({ approvals, resolve, loading }: { approvals: Approval[]; resolve: (form: HTMLFormElement, approval: Approval, action: "approve" | "reject") => Promise<void>; loading: boolean }) {
   const pending = approvals.filter((item) => item.status === "pending");
-  return <div className="space-y-4">{pending.length ? pending.map((approval) => <form className="panel p-5" key={approval.id} onSubmit={(event) => { event.preventDefault(); resolve(event.currentTarget, approval, "approve"); }}><div className="mb-3 flex items-start justify-between"><div><h2 className="font-bold">{approval.lead?.name || "New lead"}</h2><p className="mt-1 text-sm text-slate-500">{approval.lead?.email} · AI follow-up draft</p></div><Badge text="pending" /></div><textarea className="input min-h-32 resize-y text-sm leading-6" defaultValue={approval.draft} name="draft" /><div className="mt-4 flex gap-2"><button className="primary-button" disabled={loading} type="submit"><Send size={15} />Approve and send</button><button className="secondary-button" disabled={loading} onClick={(event) => { event.preventDefault(); resolve(event.currentTarget.form!, approval, "reject"); }} type="button"><XCircle size={15} />Reject</button></div></form>) : <Empty text="No pending approvals. Capture a lead to generate a draft." />}</div>;
+  return <div className="space-y-4">{pending.length ? pending.map((approval) => <form className="panel p-5" key={approval.id} onSubmit={(event) => { event.preventDefault(); resolve(event.currentTarget, approval, "approve"); }}><div className="mb-3 flex items-start justify-between"><div><h2 className="font-bold">{approval.lead?.name || "New lead"}</h2><p className="mt-1 text-sm text-slate-500">{approval.lead?.email} - AI follow-up draft</p></div><Badge text="pending" /></div><textarea className="input min-h-32 resize-y text-sm leading-6" defaultValue={approval.draft} name="draft" /><div className="mt-4 flex gap-2"><button className="primary-button" disabled={loading} type="submit"><Send size={15} />Approve and send</button><button className="secondary-button" disabled={loading} onClick={(event) => { event.preventDefault(); resolve(event.currentTarget.form!, approval, "reject"); }} type="button"><XCircle size={15} />Reject</button></div></form>) : <Empty text="No pending approvals. Capture a lead to generate a draft." />}</div>;
 }
 
 function TemplatesPage({ templates, workflows, mutate }: { templates: Template[]; workflows: WorkflowRow[]; mutate: (path: string, options: RequestInit, success: string) => Promise<void> }) {
@@ -278,7 +324,7 @@ function IntegrationsPage({ integrations, mutate }: { integrations: Integration[
 function ActivityPage({ rows }: { rows: ActivityRow[] }) { return <ActivityCard rows={rows} />; }
 function SettingsPage({ business, submit, loading }: { business: Business; submit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean }) { return <form className="panel grid max-w-2xl gap-4 p-5 sm:grid-cols-2" onSubmit={submit}><div className="sm:col-span-2"><h2 className="font-bold">Business settings</h2><p className="mt-1 text-sm text-slate-500">Update the profile used to personalize AI drafts.</p></div><div className="sm:col-span-2"><Field defaultValue={business.name} label="Business name" name="name" required /></div><Select defaultValue={business.type} label="Business type" name="type" options={["agency", "e-commerce", "service_business", "startup", "solo_founder", "other"]} /><Select defaultValue={business.tone} label="Reply tone" name="tone" options={["professional", "friendly"]} /><button className="primary-button sm:col-span-2" disabled={loading} type="submit">{loading ? "Saving..." : "Save settings"}</button></form>; }
 
-function ActivityCard({ rows }: { rows: ActivityRow[] }) { return <article className="panel p-5"><h2 className="font-bold">Recent activity</h2><div className="mt-4 space-y-3">{rows.length ? rows.map((row) => <div className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm" key={row.id}><div><div className="font-semibold">{row.label}</div><div className="mt-1 text-xs text-slate-500">{row.source} · {new Date(row.createdAt).toLocaleString()}</div></div><Badge text={row.status} /></div>) : <p className="text-sm text-slate-500">Activity will appear as you use the workspace.</p>}</div></article>; }
+function ActivityCard({ rows }: { rows: ActivityRow[] }) { return <article className="panel p-5"><h2 className="font-bold">Recent activity</h2><div className="mt-4 space-y-3">{rows.length ? rows.map((row) => <div className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm" key={row.id}><div><div className="font-semibold">{row.label}</div><div className="mt-1 text-xs text-slate-500">{row.source} - {new Date(row.createdAt).toLocaleString()}</div></div><Badge text={row.status} /></div>) : <p className="text-sm text-slate-500">Activity will appear as you use the workspace.</p>}</div></article>; }
 function ActionButton({ icon: Icon, label, onClick }: { icon: LucideIcon; label: string; onClick: () => void }) { return <button className="flex w-full items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-left text-sm font-semibold hover:bg-slate-50" onClick={onClick} type="button"><Icon className="text-blue-600" size={16} />{label}</button>; }
 function Field({ label, name, ...props }: { label: string; name: string } & React.InputHTMLAttributes<HTMLInputElement>) { return <label className="block text-sm font-semibold">{label}<input className="input mt-2" name={name} {...props} /></label>; }
 function Select({ label, name, options, ...props }: { label: string; name: string; options: string[] } & React.SelectHTMLAttributes<HTMLSelectElement>) { return <label className="block text-sm font-semibold">{label}<select className="input mt-2" name={name} {...props}>{options.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</select></label>; }

@@ -94,6 +94,22 @@ async function request(path, options = {}) {
     assert.equal(dashboard.body.metrics.pendingApprovals, 0);
     assert.equal(dashboard.body.workflows[0].runs, 1);
 
+    const demo = await request("/api/demo/start", { method: "POST", body: "{}" });
+    assert.equal(demo.response.status, 200);
+    assert.ok(demo.body.token);
+
+    const demoAuth = { Authorization: `Bearer ${demo.body.token}` };
+    const demoDashboard = await request("/api/dashboard", { headers: demoAuth });
+    assert.equal(demoDashboard.response.status, 200);
+    assert.equal(demoDashboard.body.user.email, "alex@novacreative.demo");
+    assert.equal(demoDashboard.body.metrics.activeAutomations, 2);
+    assert.equal(demoDashboard.body.metrics.leadsProcessedToday, 4);
+    assert.equal(demoDashboard.body.metrics.pendingApprovals, 1);
+
+    const resetDemo = await request("/api/demo/reset", { method: "POST", headers: demoAuth, body: "{}" });
+    assert.equal(resetDemo.response.status, 200);
+    assert.ok(resetDemo.body.token);
+
     console.log("Backend smoke tests passed");
   } finally {
     server.kill();

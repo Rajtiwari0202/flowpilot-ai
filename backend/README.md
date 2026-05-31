@@ -42,4 +42,4 @@ Authorization: Bearer <token from signup/login>
 
 ## Next Production Step
 
-Replace `backend/data/store.json` with Postgres/Supabase repositories, then swap the local token and mock integration handlers for Clerk/Supabase Auth, real OAuth, Stripe webhooks, and a queued workflow runner.
+Replace `backend/data/store.json` with Postgres/Supabase repositories, then swap the local token and mock integration handlers for Supabase Auth, real OAuth, Razorpay webhooks, and a queued workflow runner.

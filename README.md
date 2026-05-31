@@ -49,7 +49,7 @@ node backend/test.js
 1. Create a Supabase project.
 2. Run `supabase/schema.sql` in the Supabase SQL editor.
 3. Copy `apps/web/.env.local.example` to `apps/web/.env.local`.
-4. Add your Supabase URL and anonymous key.
+4. Add your Supabase URL and publishable key.
 
 The backend still uses the local JSON store while the Supabase repositories and Auth migration are built incrementally.
 
@@ -65,4 +65,37 @@ The Next.js workspace now supports a complete local demonstration:
 6. Approve the draft to simulate sending it.
 7. Confirm dashboard metrics, workflow runs, and activity logs update.
 
-External tools are still demo-mode connectors until their credentials are configured. Production rollout still requires Supabase Auth/Postgres, a real AI provider call, Gmail OAuth and sending, Stripe billing, webhook verification, and deployment configuration.
+External tools are still demo-mode connectors until their credentials are configured. Production rollout still requires Supabase Auth/Postgres, a real AI provider call, Gmail OAuth and sending, Razorpay subscriptions, webhook verification, and deployment configuration.
+
+## Recording Demo
+
+For a clean product recording:
+
+1. Start the API with `npm run dev:api`.
+2. Start the web app with `npm run dev:web`.
+3. Open `http://localhost:3000/?demo=1` to load a fresh demo automatically.
+4. Alternatively, open `http://localhost:3000` and click **Launch recording demo**.
+5. Show the dashboard metrics and recent activity.
+6. Open **Approvals**, edit Sarah Chen's AI-style draft, and click **Approve and send**.
+7. Return to **Dashboard** to show the pending approval count drop to zero.
+8. Open **Automations** to show the Lead Follow-up run count increase.
+9. Use **Reset demo** in the sidebar before recording another take.
+
+The recording demo is deterministic local sample data. It does not call external providers or send a real email.
+
+## India-First Free-Tier Stack
+
+- Database and auth: Supabase Free
+- Frontend deployment: Vercel Hobby during development
+- AI drafts: Groq Free Plan during MVP testing
+- Email: Gmail API within its quota limits
+- Billing: Razorpay Test Mode during development; live payments are pay-as-you-go
+
+Razorpay billing configuration:
+
+```env
+RAZORPAY_KEY_ID=
+RAZORPAY_KEY_SECRET=
+RAZORPAY_WEBHOOK_SECRET=
+RAZORPAY_PLAN_ID=
+```

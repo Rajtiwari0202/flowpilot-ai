@@ -7,9 +7,9 @@
     "apps/*"
   ],
   "scripts": {
-    "start": "node backend/server.js",
-    "dev": "node backend/server.js",
-    "dev:api": "node backend/server.js",
+    "start": "node --env-file-if-exists=.env backend/server.js",
+    "dev": "node --env-file-if-exists=.env backend/server.js",
+    "dev:api": "node --env-file-if-exists=.env backend/server.js",
     "dev:web": "npm run dev --workspace apps/web",
     "build:web": "npm run build --workspace apps/web",
     "lint:web": "npm run lint --workspace apps/web",

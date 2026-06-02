@@ -27,7 +27,7 @@ import type { LucideIcon } from "lucide-react";
 import { api } from "@/lib/api";
 
 type Page = "dashboard" | "automations" | "leads" | "approvals" | "templates" | "integrations" | "activity" | "settings";
-type AuthMode = "signup" | "login";
+type AuthMode = "signup" | "login" | "forgot";
 type User = { id: string; name: string; email: string; plan: string };
 type Business = { id: string; name: string; type: string; tone: string };
 type WorkflowRow = { id: string; name: string; status: string; runs: number; templateId: string };
@@ -36,7 +36,7 @@ type Approval = { id: string; leadId: string; status: string; draft: string; cre
 type Integration = { id: string; provider: string; status: string };
 type ActivityRow = { id: string; label: string; source: string; status: string; createdAt: string; type: string };
 type Template = { id: string; title: string; description: string; category: string; recommended: boolean };
-type SystemStatus = { mode: string; services: { ai: { provider: string; configured: boolean }; billing: { provider: string; configured: boolean }; database: { provider: string; configured: boolean }; leadWebhook: { configured: boolean }; gmail: { configured: boolean }; hubspot: { configured: boolean }; whatsapp: { configured: boolean } } };
+type SystemStatus = { mode: string; services: { ai: { provider: string; configured: boolean }; billing: { provider: string; configured: boolean }; database: { provider: string; configured: boolean }; leadWebhook: { configured: boolean }; gmail: { configured: boolean }; hubspot: { configured: boolean }; whatsapp: { configured: boolean }; accountEmail: { provider: string; configured: boolean } } };
 type Dashboard = {
   user: User;
   business: Business | null;
@@ -63,6 +63,7 @@ export default function Home() {
   const [token, setToken] = useState("");
   const [page, setPage] = useState<Page>("dashboard");
   const [authMode, setAuthMode] = useState<AuthMode>("signup");
+  const [resetPasswordToken, setResetPasswordToken] = useState("");
   const [user, setUser] = useState<User | null>(null);
   const [business, setBusiness] = useState<Business | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -114,6 +115,8 @@ export default function Home() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const demo = params.get("demo");
+    const verificationToken = params.get("verify-email");
+    const passwordToken = params.get("reset-password");
     if (demo === "1") {
       api<{ token: string }>("/api/demo/start", { method: "POST", body: "{}" })
         .then((data) => {
@@ -125,6 +128,18 @@ export default function Home() {
         })
         .catch((err) => setError(err instanceof Error ? err.message : "Could not launch demo workspace"));
       return;
+    }
+    if (verificationToken) {
+      api<{ message: string }>("/api/auth/verify-email", { method: "POST", body: JSON.stringify({ token: verificationToken }) })
+        .then((data) => setNotice(data.message))
+        .catch((err) => setError(err instanceof Error ? err.message : "Could not verify email"));
+      window.history.replaceState({}, "", "/");
+    }
+    if (passwordToken) {
+      window.localStorage.removeItem("flowpilot_token");
+      setToken("");
+      setResetPasswordToken(passwordToken);
+      window.history.replaceState({}, "", "/");
     }
     const integration = params.get("integration");
     if (integration) {
@@ -164,6 +179,39 @@ export default function Home() {
       setNotice(authMode === "signup" ? "Account created. Add your business details." : "Welcome back.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function forgotPasswordSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const values = Object.fromEntries(new FormData(event.currentTarget));
+      const data = await api<{ message: string }>("/api/auth/request-password-reset", { method: "POST", body: JSON.stringify(values) });
+      setNotice(data.message);
+      setAuthMode("login");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not request password reset");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resetPasswordSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const values = Object.fromEntries(new FormData(event.currentTarget));
+      const data = await api<{ message: string }>("/api/auth/reset-password", { method: "POST", body: JSON.stringify({ ...values, token: resetPasswordToken }) });
+      setNotice(data.message);
+      setResetPasswordToken("");
+      setAuthMode("login");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reset password");
     } finally {
       setLoading(false);
     }
@@ -277,7 +325,7 @@ export default function Home() {
     }
   }
 
-  if (!token) return <AuthScreen mode={authMode} setMode={setAuthMode} submit={authSubmit} launchDemo={launchDemo} loading={loading} error={error} />;
+  if (!token) return <AuthScreen error={error} forgotPasswordSubmit={forgotPasswordSubmit} launchDemo={launchDemo} loading={loading} mode={authMode} notice={notice} resetPasswordSubmit={resetPasswordSubmit} resetPasswordToken={resetPasswordToken} setMode={setAuthMode} submit={authSubmit} />;
   if (!business) return <BusinessSetup submit={businessSubmit} loading={loading} error={error} user={user} />;
 
   const metrics = dashboard?.metrics || emptyMetrics;
@@ -339,8 +387,10 @@ function Brand() {
   return <div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-lg bg-blue-600 text-white"><Bot size={19} /></div><div><div className="text-sm font-bold">FlowPilot AI</div><div className="text-xs text-slate-500">Operations workspace</div></div></div>;
 }
 
-function AuthScreen({ mode, setMode, submit, launchDemo, loading, error }: { mode: AuthMode; setMode: (mode: AuthMode) => void; submit: (event: FormEvent<HTMLFormElement>) => void; launchDemo: () => void; loading: boolean; error: string }) {
-  return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-md"><div className="mb-6"><Brand /></div><div className="panel p-6"><h1 className="text-xl font-bold">{mode === "signup" ? "Create your FlowPilot account" : "Welcome back"}</h1><p className="mt-2 text-sm text-slate-500">Start with a lead follow-up automation for your business.</p><button className="secondary-button mt-5 w-full border-blue-200 bg-blue-50 text-blue-700" disabled={loading} onClick={launchDemo} type="button"><Sparkles size={16} />Launch recording demo</button><div className="my-4 flex items-center gap-3 text-xs text-slate-400"><span className="h-px flex-1 bg-slate-200" />or create your own workspace<span className="h-px flex-1 bg-slate-200" /></div>{error && <Banner text={error} tone="error" />}<form className="space-y-4" onSubmit={submit}>{mode === "signup" && <Field label="Full name" name="name" placeholder="Alex Johnson" required />}<Field label="Work email" name="email" placeholder="alex@company.com" required type="email" /><Field label="Password" name="password" placeholder="Minimum 8 characters" required type="password" /><button className="primary-button w-full" disabled={loading} type="submit">{loading ? "Please wait..." : mode === "signup" ? "Create account" : "Log in"}</button></form><button className="mt-4 w-full text-sm font-semibold text-blue-600" onClick={() => setMode(mode === "signup" ? "login" : "signup")} type="button">{mode === "signup" ? "Already have an account? Log in" : "Need an account? Sign up"}</button></div></div></main>;
+function AuthScreen({ mode, setMode, submit, forgotPasswordSubmit, resetPasswordSubmit, resetPasswordToken, launchDemo, loading, notice, error }: { mode: AuthMode; setMode: (mode: AuthMode) => void; submit: (event: FormEvent<HTMLFormElement>) => void; forgotPasswordSubmit: (event: FormEvent<HTMLFormElement>) => void; resetPasswordSubmit: (event: FormEvent<HTMLFormElement>) => void; resetPasswordToken: string; launchDemo: () => void; loading: boolean; notice: string; error: string }) {
+  if (resetPasswordToken) return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-md"><div className="mb-6"><Brand /></div><div className="panel p-6"><h1 className="text-xl font-bold">Choose a new password</h1><p className="mt-2 text-sm text-slate-500">Use at least eight characters.</p>{error && <Banner text={error} tone="error" />}<form className="mt-5 space-y-4" onSubmit={resetPasswordSubmit}><Field label="New password" name="password" placeholder="Minimum 8 characters" required type="password" /><button className="primary-button w-full" disabled={loading} type="submit">{loading ? "Updating..." : "Update password"}</button></form></div></div></main>;
+  if (mode === "forgot") return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-md"><div className="mb-6"><Brand /></div><div className="panel p-6"><h1 className="text-xl font-bold">Reset your password</h1><p className="mt-2 text-sm text-slate-500">We will send a recovery link if the account exists.</p>{error && <Banner text={error} tone="error" />}<form className="mt-5 space-y-4" onSubmit={forgotPasswordSubmit}><Field label="Work email" name="email" placeholder="alex@company.com" required type="email" /><button className="primary-button w-full" disabled={loading} type="submit">{loading ? "Sending..." : "Send recovery link"}</button></form><button className="mt-4 w-full text-sm font-semibold text-blue-600" onClick={() => setMode("login")} type="button">Back to login</button></div></div></main>;
+  return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-md"><div className="mb-6"><Brand /></div><div className="panel p-6"><h1 className="text-xl font-bold">{mode === "signup" ? "Create your FlowPilot account" : "Welcome back"}</h1><p className="mt-2 text-sm text-slate-500">Start with a lead follow-up automation for your business.</p><button className="secondary-button mt-5 w-full border-blue-200 bg-blue-50 text-blue-700" disabled={loading} onClick={launchDemo} type="button"><Sparkles size={16} />Launch recording demo</button><div className="my-4 flex items-center gap-3 text-xs text-slate-400"><span className="h-px flex-1 bg-slate-200" />or create your own workspace<span className="h-px flex-1 bg-slate-200" /></div>{notice && <Banner text={notice} tone="success" />}{error && <Banner text={error} tone="error" />}<form className="space-y-4" onSubmit={submit}>{mode === "signup" && <Field label="Full name" name="name" placeholder="Alex Johnson" required />}<Field label="Work email" name="email" placeholder="alex@company.com" required type="email" /><Field label="Password" name="password" placeholder="Minimum 8 characters" required type="password" /><button className="primary-button w-full" disabled={loading} type="submit">{loading ? "Please wait..." : mode === "signup" ? "Create account" : "Log in"}</button></form>{mode === "login" && <button className="mt-4 w-full text-sm font-semibold text-blue-600" onClick={() => setMode("forgot")} type="button">Forgot password?</button>}<button className="mt-4 w-full text-sm font-semibold text-blue-600" onClick={() => setMode(mode === "signup" ? "login" : "signup")} type="button">{mode === "signup" ? "Already have an account? Log in" : "Need an account? Sign up"}</button></div></div></main>;
 }
 
 function BusinessSetup({ submit, loading, error, user }: { submit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; error: string; user: User | null }) {
@@ -377,7 +427,7 @@ function IntegrationsPage({ integrations, connect }: { integrations: Integration
 function ActivityPage({ rows }: { rows: ActivityRow[] }) { return <ActivityCard rows={rows} />; }
 function SettingsPage({ business, submit, loading, startSubscriptionCheckout, systemStatus }: { business: Business; submit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; startSubscriptionCheckout: () => Promise<void>; systemStatus: SystemStatus | null }) {
   const services = systemStatus?.services;
-  return <div className="grid max-w-4xl gap-5 xl:grid-cols-[1.3fr_1fr]"><form className="panel grid gap-4 p-5 sm:grid-cols-2" onSubmit={submit}><div className="sm:col-span-2"><h2 className="font-bold">Business settings</h2><p className="mt-1 text-sm text-slate-500">Update the profile used to personalize AI drafts.</p></div><div className="sm:col-span-2"><Field defaultValue={business.name} label="Business name" name="name" required /></div><Select defaultValue={business.type} label="Business type" name="type" options={["agency", "e-commerce", "service_business", "startup", "solo_founder", "other"]} /><Select defaultValue={business.tone} label="Reply tone" name="tone" options={["professional", "friendly"]} /><button className="primary-button sm:col-span-2" disabled={loading} type="submit">{loading ? "Saving..." : "Save settings"}</button></form><article className="panel p-5"><h2 className="font-bold">Production readiness</h2><p className="mt-1 text-sm text-slate-500">Configured services detected by the API.</p><div className="mt-4 space-y-3"><ServiceRow label="AI drafts" value={services?.ai.provider || "checking"} ready={Boolean(services?.ai.configured)} /><ServiceRow label="Database" value={services?.database.provider || "checking"} ready={Boolean(services?.database.configured)} /><ServiceRow label="Razorpay billing" value={services?.billing.configured ? "configured" : "setup required"} ready={Boolean(services?.billing.configured)} /><ServiceRow label="Lead webhook" value={services?.leadWebhook.configured ? "secured" : "setup required"} ready={Boolean(services?.leadWebhook.configured)} /><ServiceRow label="Gmail OAuth" value={services?.gmail.configured ? "configured" : "setup required"} ready={Boolean(services?.gmail.configured)} /><ServiceRow label="HubSpot OAuth" value={services?.hubspot.configured ? "configured" : "setup required"} ready={Boolean(services?.hubspot.configured)} /><ServiceRow label="WhatsApp API" value={services?.whatsapp.configured ? "configured" : "setup required"} ready={Boolean(services?.whatsapp.configured)} /></div><button className="secondary-button mt-5 w-full" disabled={loading || !services?.billing.configured} onClick={startSubscriptionCheckout} type="button"><Settings size={15} />Open Razorpay checkout</button></article></div>;
+  return <div className="grid max-w-4xl gap-5 xl:grid-cols-[1.3fr_1fr]"><form className="panel grid gap-4 p-5 sm:grid-cols-2" onSubmit={submit}><div className="sm:col-span-2"><h2 className="font-bold">Business settings</h2><p className="mt-1 text-sm text-slate-500">Update the profile used to personalize AI drafts.</p></div><div className="sm:col-span-2"><Field defaultValue={business.name} label="Business name" name="name" required /></div><Select defaultValue={business.type} label="Business type" name="type" options={["agency", "e-commerce", "service_business", "startup", "solo_founder", "other"]} /><Select defaultValue={business.tone} label="Reply tone" name="tone" options={["professional", "friendly"]} /><button className="primary-button sm:col-span-2" disabled={loading} type="submit">{loading ? "Saving..." : "Save settings"}</button></form><article className="panel p-5"><h2 className="font-bold">Production readiness</h2><p className="mt-1 text-sm text-slate-500">Configured services detected by the API.</p><div className="mt-4 space-y-3"><ServiceRow label="AI drafts" value={services?.ai.provider || "checking"} ready={Boolean(services?.ai.configured)} /><ServiceRow label="Database" value={services?.database.provider || "checking"} ready={Boolean(services?.database.configured)} /><ServiceRow label="Account email" value={services?.accountEmail.provider || "checking"} ready={Boolean(services?.accountEmail.configured)} /><ServiceRow label="Razorpay billing" value={services?.billing.configured ? "configured" : "setup required"} ready={Boolean(services?.billing.configured)} /><ServiceRow label="Lead webhook" value={services?.leadWebhook.configured ? "secured" : "setup required"} ready={Boolean(services?.leadWebhook.configured)} /><ServiceRow label="Gmail OAuth" value={services?.gmail.configured ? "configured" : "setup required"} ready={Boolean(services?.gmail.configured)} /><ServiceRow label="HubSpot OAuth" value={services?.hubspot.configured ? "configured" : "setup required"} ready={Boolean(services?.hubspot.configured)} /><ServiceRow label="WhatsApp API" value={services?.whatsapp.configured ? "configured" : "setup required"} ready={Boolean(services?.whatsapp.configured)} /></div><button className="secondary-button mt-5 w-full" disabled={loading || !services?.billing.configured} onClick={startSubscriptionCheckout} type="button"><Settings size={15} />Open Razorpay checkout</button></article></div>;
 }
 
 function ActivityCard({ rows }: { rows: ActivityRow[] }) { return <article className="panel p-5"><h2 className="font-bold">Recent activity</h2><div className="mt-4 space-y-3">{rows.length ? rows.map((row) => <div className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm" key={row.id}><div><div className="font-semibold">{row.label}</div><div className="mt-1 text-xs text-slate-500">{row.source} - {new Date(row.createdAt).toLocaleString()}</div></div><Badge text={row.status} /></div>) : <p className="text-sm text-slate-500">Activity will appear as you use the workspace.</p>}</div></article>; }

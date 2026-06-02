@@ -1,5 +1,7 @@
--- FlowPilot AI MVP schema for Supabase/Postgres.
--- Run this in the Supabase SQL editor after creating a project.
+-- Legacy normalized schema draft retained for reference.
+-- The active server-owned repository migration is:
+-- supabase/migrations/202606020001_flowpilot_core.sql
+-- Apply it with: npm run migrate
 
 create extension if not exists "pgcrypto";
 

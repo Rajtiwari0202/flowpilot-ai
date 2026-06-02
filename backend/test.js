@@ -52,8 +52,15 @@ async function request(path, options = {}) {
     });
     assert.equal(signup.response.status, 201);
     assert.ok(signup.body.token);
+    assert.ok(signup.body.developmentToken);
 
     const auth = { Authorization: `Bearer ${signup.body.token}` };
+    const verified = await request("/api/auth/verify-email", { method: "POST", body: JSON.stringify({ token: signup.body.developmentToken }) });
+    assert.equal(verified.response.status, 200);
+
+    const reusedVerification = await request("/api/auth/verify-email", { method: "POST", body: JSON.stringify({ token: signup.body.developmentToken }) });
+    assert.equal(reusedVerification.response.status, 400);
+
     const business = await request("/api/onboarding/business", {
       method: "POST",
       headers: auth,
@@ -132,6 +139,20 @@ async function request(path, options = {}) {
       body: webhookPayload
     });
     assert.equal(duplicateRazorpay.body.duplicate, true);
+
+    const passwordReset = await request("/api/auth/request-password-reset", { method: "POST", body: JSON.stringify({ email }) });
+    assert.equal(passwordReset.response.status, 200);
+    assert.ok(passwordReset.body.developmentToken);
+
+    const changedPassword = await request("/api/auth/reset-password", { method: "POST", body: JSON.stringify({ token: passwordReset.body.developmentToken, password: "new-password-123" }) });
+    assert.equal(changedPassword.response.status, 200);
+
+    const login = await request("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password: "new-password-123" }) });
+    assert.equal(login.response.status, 200);
+    assert.ok(login.body.token);
+
+    const oversized = await request("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password: "x".repeat(1024 * 1024 + 100) }) });
+    assert.equal(oversized.response.status, 413);
 
     const demo = await request("/api/demo/start", { method: "POST", body: "{}" });
     assert.equal(demo.response.status, 200);

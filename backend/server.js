@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { createRepository } = require("./repository");
 
 const PORT = Number(process.env.PORT || 8787);
 const ROOT = path.resolve(__dirname, "..");
@@ -11,16 +12,54 @@ const JWT_SECRET = process.env.JWT_SECRET || "flowpilot-local-dev-secret";
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 const API_PUBLIC_URL = process.env.API_PUBLIC_URL || `http://localhost:${PORT}`;
 const APP_ORIGIN = process.env.APP_ORIGIN || "http://localhost:3000";
+const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES || 1024 * 1024);
+const rateLimitBuckets = new Map();
 
-function readStore() {
-  if (!fs.existsSync(STORE_PATH)) {
-    fs.copyFileSync(SEED_STORE_PATH, STORE_PATH);
-  }
-  return JSON.parse(fs.readFileSync(STORE_PATH, "utf8"));
+const repository = createRepository({ seedStorePath: SEED_STORE_PATH, storePath: STORE_PATH });
+
+async function readStore() {
+  return repository.read();
 }
 
-function writeStore(store) {
-  fs.writeFileSync(STORE_PATH, JSON.stringify(store, null, 2));
+async function writeStore(store) {
+  return repository.write(store);
+}
+
+function structuredLog(level, event, fields = {}) {
+  console.log(JSON.stringify({ level, event, time: now(), ...fields }));
+}
+
+function validateEnvironment() {
+  const warnings = [];
+  if (JWT_SECRET === "flowpilot-local-dev-secret") warnings.push("JWT_SECRET is using the development fallback");
+  if (!process.env.TOKEN_ENCRYPTION_KEY) warnings.push("TOKEN_ENCRYPTION_KEY is falling back to JWT_SECRET");
+  if (!process.env.DATABASE_URL) warnings.push("DATABASE_URL is not set; using local JSON storage");
+  if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) warnings.push("Resend account-email delivery is not configured");
+  if (APP_ORIGIN.includes("localhost")) warnings.push("APP_ORIGIN still points to localhost");
+  if (API_PUBLIC_URL.includes("localhost")) warnings.push("API_PUBLIC_URL still points to localhost");
+  if (process.env.NODE_ENV === "production" && warnings.length) throw new Error(`Production environment invalid: ${warnings.join("; ")}`);
+  for (const warning of warnings) structuredLog("warn", "environment.warning", { warning });
+}
+
+function clientIp(req) {
+  return String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown").split(",")[0].trim();
+}
+
+function enforceRateLimit(req, res, url) {
+  const sensitive = /^\/api\/auth\/(login|signup|request-password-reset|reset-password|verify-email)$/.test(url.pathname);
+  const limit = sensitive ? Number(process.env.AUTH_RATE_LIMIT || 12) : Number(process.env.API_RATE_LIMIT || 180);
+  const windowMs = 60 * 1000;
+  const key = `${clientIp(req)}:${sensitive ? "auth" : "api"}`;
+  const current = rateLimitBuckets.get(key);
+  const bucket = !current || current.resetAt <= Date.now() ? { count: 0, resetAt: Date.now() + windowMs } : current;
+  bucket.count += 1;
+  rateLimitBuckets.set(key, bucket);
+  res.setHeader("RateLimit-Limit", String(limit));
+  res.setHeader("RateLimit-Remaining", String(Math.max(0, limit - bucket.count)));
+  res.setHeader("RateLimit-Reset", String(Math.ceil(bucket.resetAt / 1000)));
+  if (bucket.count <= limit) return false;
+  send(res, 429, { error: "too many requests; try again shortly" });
+  return true;
 }
 
 function id(prefix) {
@@ -75,6 +114,13 @@ function send(res, status, payload, headers = {}) {
     "Access-Control-Allow-Headers": "authorization, content-type",
     "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
     "Content-Type": isJson ? "application/json; charset=utf-8" : headers["Content-Type"] || "text/plain; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'self'",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-Request-Id": res.requestId || "",
     ...headers
   });
   res.end(isJson ? JSON.stringify(payload) : payload);
@@ -82,7 +128,18 @@ function send(res, status, payload, headers = {}) {
 
 async function readRawBody(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let size = 0;
+  let tooLarge = false;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) tooLarge = true;
+    if (!tooLarge) chunks.push(chunk);
+  }
+  if (tooLarge) {
+    const error = new Error("request body is too large");
+    error.status = 413;
+    throw error;
+  }
   return Buffer.concat(chunks).toString("utf8");
 }
 
@@ -153,6 +210,60 @@ function dashboardFor(store, user) {
     activity,
     approvals
   };
+}
+
+function tokenHash(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function issueAccountToken(store, user, kind, ttlMinutes) {
+  const token = crypto.randomBytes(32).toString("hex");
+  store.authTokens = (store.authTokens || []).filter((item) => !(item.userId === user.id && item.kind === kind && !item.usedAt));
+  store.authTokens.push({ id: id("tok"), userId: user.id, kind, tokenHash: tokenHash(token), expiresAt: new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString(), createdAt: now() });
+  return token;
+}
+
+function consumeAccountToken(store, token, kind) {
+  const row = (store.authTokens || []).find((item) => item.kind === kind && item.tokenHash === tokenHash(String(token || "")) && !item.usedAt && new Date(item.expiresAt).getTime() > Date.now());
+  if (!row) return null;
+  row.usedAt = now();
+  return store.users.find((item) => item.id === row.userId) || null;
+}
+
+function queueAccountEmail(store, user, kind, token) {
+  const path = kind === "verify_email" ? "verify-email" : "reset-password";
+  const row = { id: id("mail"), userId: user.id, to: user.email, kind, status: "queued", link: `${APP_ORIGIN}/?${path}=${token}`, createdAt: now() };
+  store.outbox ||= [];
+  store.outbox.push(row);
+  structuredLog("info", "email.queued", { kind, userId: user.id });
+  return row;
+}
+
+async function deliverAccountEmail(row) {
+  if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) return;
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": row.id,
+      "User-Agent": "flowpilot-api/0.1"
+    },
+    body: JSON.stringify({
+      from: process.env.RESEND_FROM_EMAIL,
+      to: [row.to],
+      subject: row.kind === "verify_email" ? "Verify your FlowPilot email" : "Reset your FlowPilot password",
+      text: `Open this link to continue: ${row.link}`
+    }),
+    signal: AbortSignal.timeout(12000)
+  });
+  if (!response.ok) throw new Error(`Resend email failed: ${response.status}`);
+  row.status = "sent";
+  row.sentAt = now();
+}
+
+function developmentToken(token) {
+  return process.env.NODE_ENV === "production" ? {} : { developmentToken: token };
 }
 
 function encryptSecret(value) {
@@ -327,7 +438,8 @@ function systemStatus() {
       leadWebhook: { configured: Boolean(process.env.LEAD_WEBHOOK_SECRET) },
       gmail: { configured: Boolean(process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET) },
       hubspot: { configured: Boolean(process.env.HUBSPOT_CLIENT_ID && process.env.HUBSPOT_CLIENT_SECRET) },
-      whatsapp: { configured: Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_VERIFY_TOKEN && process.env.WHATSAPP_APP_SECRET && process.env.WHATSAPP_OWNER_USER_ID) }
+      whatsapp: { configured: Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_VERIFY_TOKEN && process.env.WHATSAPP_APP_SECRET && process.env.WHATSAPP_OWNER_USER_ID) },
+      accountEmail: { provider: process.env.RESEND_API_KEY ? "resend" : "local_outbox", configured: Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL) }
     }
   };
 }
@@ -357,7 +469,7 @@ async function createLeadApproval(store, user, body) {
     console.error("HubSpot sync:", error.message);
     logActivity(store, { userId: user.id, type: "integration.error", label: `${lead.name} could not sync to HubSpot`, source: "hubspot", status: "error" });
   }
-  writeStore(store);
+  await writeStore(store);
   return { lead, approval };
 }
 
@@ -369,7 +481,7 @@ function signaturesMatch(raw, signature, secret) {
   return received.length === candidate.length && crypto.timingSafeEqual(received, candidate);
 }
 
-function seedDemoWorkspace(store) {
+async function seedDemoWorkspace(store) {
   const userId = "usr_demo_founder";
   const createdAt = now();
   const removeOwnedRows = (collection) => {
@@ -379,7 +491,7 @@ function seedDemoWorkspace(store) {
   store.users = store.users.filter((item) => item.id !== userId);
   ["businesses", "integrations", "workflows", "leads", "activity", "approvals"].forEach(removeOwnedRows);
 
-  const user = { id: userId, name: "Alex Johnson", email: "alex@novacreative.demo", passwordHash: hashPassword("flowpilot-demo"), plan: "free", createdAt };
+  const user = { id: userId, name: "Alex Johnson", email: "alex@novacreative.demo", passwordHash: hashPassword("flowpilot-demo"), emailVerified: true, plan: "free", createdAt };
   store.users.push(user);
   store.businesses.push({ id: "biz_demo_agency", userId, name: "Nova Creative Studio", type: "agency", tone: "friendly", goals: ["lead_follow_up"], createdAt, updatedAt: createdAt });
   store.integrations.push(
@@ -406,13 +518,13 @@ function seedDemoWorkspace(store) {
   ].forEach(([activityId, type, label, source, status], index) => {
     store.activity.push({ id: activityId, userId, type, label, source, status, createdAt: new Date(Date.now() - index * 18 * 60 * 1000).toISOString() });
   });
-  writeStore(store);
+  await writeStore(store);
   return user;
 }
 
 async function route(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const store = readStore();
+  const store = await readStore();
   store.processedWebhookEvents ||= [];
 
   if (req.method === "OPTIONS") return send(res, 204, "");
@@ -425,7 +537,7 @@ async function route(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/demo/start") {
-    const user = seedDemoWorkspace(store);
+    const user = await seedDemoWorkspace(store);
     return send(res, 200, { user: publicUser(user), token: signToken({ sub: user.id }), demo: true });
   }
 
@@ -478,7 +590,7 @@ async function route(req, res) {
       logActivity(store, { userId: user.id, type: `billing.${subscription.status}`, label: `Razorpay subscription ${subscription.status}`, source: "razorpay" });
     }
     if (eventId) store.processedWebhookEvents.push(eventId);
-    writeStore(store);
+    await writeStore(store);
     return send(res, 200, { ok: true });
   }
 
@@ -491,12 +603,55 @@ async function route(req, res) {
       const tokens = await exchangeOauthCode(provider, url.searchParams.get("code"));
       upsertIntegration(store, state.sub, provider, { status: "connected", encryptedCredentials: encryptSecret(tokens) });
       logActivity(store, { userId: state.sub, type: "integration.connected", label: `${provider} connected`, source: "oauth" });
-      writeStore(store);
+      await writeStore(store);
       return redirect(res, `${APP_ORIGIN}/?integration=${provider}_connected`);
     } catch (error) {
       console.error(`${provider} OAuth callback:`, error.message);
       return redirect(res, `${APP_ORIGIN}/?integration=${provider}_failed`);
     }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/request-email-verification") {
+    const body = await parseBody(req);
+    const user = store.users.find((item) => item.email === String(body.email || "").toLowerCase());
+    if (!user) return send(res, 200, { message: "If the account exists, a verification email has been queued." });
+    const token = issueAccountToken(store, user, "verify_email", 60 * 24);
+    const email = queueAccountEmail(store, user, "verify_email", token);
+    await deliverAccountEmail(email);
+    await writeStore(store);
+    return send(res, 200, { message: "If the account exists, a verification email has been queued.", ...developmentToken(token) });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/verify-email") {
+    const body = await parseBody(req);
+    const user = consumeAccountToken(store, body.token, "verify_email");
+    if (!user) return send(res, 400, { error: "verification token is invalid or expired" });
+    user.emailVerified = true;
+    user.emailVerifiedAt = now();
+    await writeStore(store);
+    return send(res, 200, { message: "Email verified successfully." });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/request-password-reset") {
+    const body = await parseBody(req);
+    const user = store.users.find((item) => item.email === String(body.email || "").toLowerCase());
+    if (!user) return send(res, 200, { message: "If the account exists, a password reset email has been queued." });
+    const token = issueAccountToken(store, user, "reset_password", 30);
+    const email = queueAccountEmail(store, user, "reset_password", token);
+    await deliverAccountEmail(email);
+    await writeStore(store);
+    return send(res, 200, { message: "If the account exists, a password reset email has been queued.", ...developmentToken(token) });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/reset-password") {
+    const body = await parseBody(req);
+    if (String(body.password || "").length < 8) return send(res, 400, { error: "password must be at least 8 characters" });
+    const user = consumeAccountToken(store, body.token, "reset_password");
+    if (!user) return send(res, 400, { error: "password reset token is invalid or expired" });
+    user.passwordHash = hashPassword(body.password);
+    user.passwordChangedAt = now();
+    await writeStore(store);
+    return send(res, 200, { message: "Password reset successfully." });
   }
 
   if (req.method === "POST" && url.pathname === "/api/auth/signup") {
@@ -505,11 +660,14 @@ async function route(req, res) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) return send(res, 400, { error: "enter a valid email address" });
     if (String(body.password).length < 8) return send(res, 400, { error: "password must be at least 8 characters" });
     if (store.users.some((user) => user.email.toLowerCase() === body.email.toLowerCase())) return send(res, 409, { error: "email already exists" });
-    const user = { id: id("usr"), name: body.name, email: body.email.toLowerCase(), passwordHash: hashPassword(body.password), plan: "free", createdAt: now() };
+    const user = { id: id("usr"), name: body.name, email: body.email.toLowerCase(), passwordHash: hashPassword(body.password), emailVerified: false, plan: "free", createdAt: now() };
     store.users.push(user);
     logActivity(store, { userId: user.id, type: "user.created", label: "Account created", source: "auth" });
-    writeStore(store);
-    return send(res, 201, { user: publicUser(user), token: signToken({ sub: user.id }) });
+    const verificationToken = issueAccountToken(store, user, "verify_email", 60 * 24);
+    const email = queueAccountEmail(store, user, "verify_email", verificationToken);
+    await deliverAccountEmail(email);
+    await writeStore(store);
+    return send(res, 201, { user: publicUser(user), token: signToken({ sub: user.id }), ...developmentToken(verificationToken) });
   }
 
   if (req.method === "POST" && url.pathname === "/api/auth/login") {
@@ -527,12 +685,13 @@ async function route(req, res) {
 
   const user = getAuthUser(req, store);
   if (url.pathname.startsWith("/api/") && !user) return send(res, 401, { error: "missing or invalid bearer token" });
+  if (process.env.NODE_ENV === "production" && !user.emailVerified && url.pathname !== "/api/me") return send(res, 403, { error: "verify your email before using the workspace" });
 
   if (req.method === "GET" && url.pathname === "/api/me") return send(res, 200, { user: publicUser(user), business: getUserBusiness(store, user.id) });
 
   if (req.method === "POST" && url.pathname === "/api/demo/reset") {
     if (user.id !== "usr_demo_founder") return send(res, 403, { error: "demo reset is only available in the demo workspace" });
-    const demoUser = seedDemoWorkspace(store);
+    const demoUser = await seedDemoWorkspace(store);
     return send(res, 200, { user: publicUser(demoUser), token: signToken({ sub: demoUser.id }), demo: true });
   }
 
@@ -551,7 +710,7 @@ async function route(req, res) {
       updatedAt: now()
     });
     logActivity(store, { userId: user.id, type: "business.updated", label: "Business profile updated", source: "onboarding" });
-    writeStore(store);
+    await writeStore(store);
     return send(res, 200, { business });
   }
 
@@ -596,7 +755,7 @@ async function route(req, res) {
     };
     store.workflows.push(workflow);
     logActivity(store, { userId: user.id, type: "workflow.created", label: `${workflow.name} activated`, source: "templates" });
-    writeStore(store);
+    await writeStore(store);
     return send(res, 201, { workflow });
   }
 
@@ -608,7 +767,7 @@ async function route(req, res) {
     if (["active", "paused"].includes(body.status)) workflow.status = body.status;
     workflow.updatedAt = now();
     logActivity(store, { userId: user.id, type: "workflow.updated", label: `${workflow.name} ${workflow.status}`, source: "dashboard" });
-    writeStore(store);
+    await writeStore(store);
     return send(res, 200, { workflow });
   }
 
@@ -637,7 +796,7 @@ async function route(req, res) {
       if (workflow) workflow.runs += 1;
     }
     logActivity(store, { userId: user.id, type: `approval.${approval.status}`, label: `Draft ${approval.status}`, source: "approvals" });
-    writeStore(store);
+    await writeStore(store);
     return send(res, 200, { approval });
   }
 
@@ -648,7 +807,7 @@ async function route(req, res) {
     if (authorizationUrl) return send(res, 200, { provider, authorizationUrl, mode: "oauth" });
     const integration = upsertIntegration(store, user.id, provider, { status: "connected" });
     logActivity(store, { userId: user.id, type: "integration.connected", label: `${provider} connected`, source: "integrations" });
-    writeStore(store);
+    await writeStore(store);
     return send(res, 200, { integration, mode: "demo" });
   }
 
@@ -672,7 +831,7 @@ async function route(req, res) {
     const subscription = await response.json();
     if (!response.ok) return send(res, response.status, { error: subscription.error?.description || "Could not create Razorpay subscription" });
     user.billing = { provider: "razorpay", subscriptionId: subscription.id, status: subscription.status, updatedAt: now() };
-    writeStore(store);
+    await writeStore(store);
     return send(res, 201, { keyId: process.env.RAZORPAY_KEY_ID, subscription });
   }
 
@@ -680,14 +839,21 @@ async function route(req, res) {
 }
 
 const server = http.createServer((req, res) => {
+  const startedAt = Date.now();
+  res.requestId = req.headers["x-request-id"] || id("req");
+  res.on("finish", () => structuredLog("info", "http.request", { requestId: res.requestId, method: req.method, path: req.url, status: res.statusCode, durationMs: Date.now() - startedAt, ip: clientIp(req) }));
+  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  if (enforceRateLimit(req, res, url)) return;
   route(req, res).catch((error) => {
-    console.error(error);
-    send(res, 500, { error: "internal server error" });
+    structuredLog("error", "http.error", { requestId: res.requestId, message: error.message, stack: process.env.NODE_ENV === "production" ? undefined : error.stack });
+    send(res, error.status || 500, { error: error.status ? error.message : "internal server error" });
   });
 });
 
+validateEnvironment();
+
 server.listen(PORT, () => {
-  console.log(`FlowPilot API listening on http://localhost:${PORT}`);
+  structuredLog("info", "server.started", { port: PORT, repository: repository.mode });
 });
 
 server.on("error", (error) => {

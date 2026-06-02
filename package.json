@@ -13,9 +13,13 @@
     "dev:web": "npm run dev --workspace apps/web",
     "build:web": "npm run build --workspace apps/web",
     "lint:web": "npm run lint --workspace apps/web",
-    "test": "node backend/test.js"
+    "test": "node backend/test.js",
+    "migrate": "node --env-file-if-exists=.env backend/migrate.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "postgres": "^3.4.9"
   }
 }

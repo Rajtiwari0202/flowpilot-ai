@@ -49,11 +49,12 @@ node backend/test.js
 ## Supabase Migration
 
 1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the Supabase SQL editor.
-3. Copy `apps/web/.env.local.example` to `apps/web/.env.local`.
-4. Add your Supabase URL and publishable key.
+2. Add the session-pooler `DATABASE_URL` and migration `DIRECT_URL` to `.env`.
+3. Run `npm run migrate`.
+4. Copy `apps/web/.env.local.example` to `apps/web/.env.local`.
+5. Add your Supabase URL and publishable key.
 
-The backend still uses the local JSON store while the Supabase repositories and Auth migration are built incrementally.
+When `DATABASE_URL` is present, the backend uses the Supabase Postgres repository. Without it, local development and automated tests continue to use the ignored JSON runtime store. The recording demo seed works in both modes.
 
 ## Local MVP Demo
 
@@ -117,12 +118,17 @@ APP_ORIGIN=https://your-frontend-domain.example
 API_PUBLIC_URL=https://your-api-domain.example
 JWT_SECRET=generate-a-long-random-secret
 TOKEN_ENCRYPTION_KEY=generate-a-separate-long-random-secret
+MAX_BODY_BYTES=1048576
+AUTH_RATE_LIMIT=12
+API_RATE_LIMIT=180
 GROQ_API_KEY=
 LEAD_WEBHOOK_SECRET=generate-a-separate-random-secret
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=
 RAZORPAY_WEBHOOK_SECRET=
 RAZORPAY_PLAN_ID=
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=
 ```
 
 Generate secrets with:
@@ -146,6 +152,35 @@ POST /api/webhooks/razorpay
 
 The backend validates `X-Razorpay-Signature` and deduplicates events using `X-Razorpay-Event-Id`.
 
+## Account Security
+
+The API includes:
+
+- Password hashing with Node `scrypt`
+- Short-lived JWT bearer tokens
+- One-time email-verification tokens
+- One-time password-reset tokens
+- Optional verification and recovery delivery through Resend
+- Local development outbox fallback when Resend is not configured
+- Per-IP rate limiting for authentication and general API routes
+- One-megabyte request body limits by default
+- Security headers and request IDs
+- Structured JSON request and error logs
+- Production startup validation for database and secret configuration
+
+Configure account email delivery before production:
+
+```env
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=FlowPilot <no-reply@your-verified-domain.example>
+```
+
+Run the Postgres migration:
+
+```bash
+npm run migrate
+```
+
 Gmail and HubSpot OAuth callback URLs:
 
 ```text
@@ -163,6 +198,5 @@ Set `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, and `WHATSAPP_OWNER_USER_ID`
 
 ## Remaining Production Work
 
-- Replace the JSON development repository with Supabase/Postgres queries using `supabase/schema.sql`.
 - Add WhatsApp outbound replies if you want approvals to answer on WhatsApp as well as Gmail.
 - Deploy the API and web app, then configure public webhook URLs.

@@ -36,6 +36,7 @@ type Approval = { id: string; leadId: string; status: string; draft: string; cre
 type Integration = { id: string; provider: string; status: string };
 type ActivityRow = { id: string; label: string; source: string; status: string; createdAt: string; type: string };
 type Template = { id: string; title: string; description: string; category: string; recommended: boolean };
+type SystemStatus = { mode: string; services: { ai: { provider: string; configured: boolean }; billing: { provider: string; configured: boolean }; database: { provider: string; configured: boolean }; leadWebhook: { configured: boolean }; gmail: { configured: boolean }; hubspot: { configured: boolean }; whatsapp: { configured: boolean } } };
 type Dashboard = {
   user: User;
   business: Business | null;
@@ -71,6 +72,7 @@ export default function Home() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [activity, setActivity] = useState<ActivityRow[]>([]);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -82,7 +84,7 @@ export default function Home() {
     setLoading(true);
     setError("");
     try {
-      const [dash, workflowData, leadData, approvalData, integrationData, activityData, templateData] = await Promise.all([
+      const [dash, workflowData, leadData, approvalData, integrationData, activityData, templateData, statusData] = await Promise.all([
         request<Dashboard>("/api/dashboard"),
         request<{ workflows: WorkflowRow[] }>("/api/workflows"),
         request<{ leads: Lead[] }>("/api/leads"),
@@ -90,6 +92,7 @@ export default function Home() {
         request<{ integrations: Integration[] }>("/api/integrations"),
         request<{ activity: ActivityRow[] }>("/api/activity"),
         api<{ templates: Template[] }>("/api/templates"),
+        api<SystemStatus>("/api/system/status"),
       ]);
       setDashboard(dash);
       setUser(dash.user);
@@ -100,6 +103,7 @@ export default function Home() {
       setIntegrations(integrationData.integrations);
       setActivity(activityData.activity);
       setTemplates(templateData.templates);
+      setSystemStatus(statusData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load workspace");
     } finally {
@@ -108,7 +112,8 @@ export default function Home() {
   }, [request, token]);
 
   useEffect(() => {
-    const demo = new URLSearchParams(window.location.search).get("demo");
+    const params = new URLSearchParams(window.location.search);
+    const demo = params.get("demo");
     if (demo === "1") {
       api<{ token: string }>("/api/demo/start", { method: "POST", body: "{}" })
         .then((data) => {
@@ -120,6 +125,11 @@ export default function Home() {
         })
         .catch((err) => setError(err instanceof Error ? err.message : "Could not launch demo workspace"));
       return;
+    }
+    const integration = params.get("integration");
+    if (integration) {
+      setNotice(integration.endsWith("_connected") ? "Integration connected successfully." : "Integration connection failed. Check your provider settings and try again.");
+      window.history.replaceState({}, "", "/");
     }
     const stored = window.localStorage.getItem("flowpilot_token") || "";
     setToken(stored);
@@ -225,6 +235,48 @@ export default function Home() {
     }
   }
 
+  async function startSubscriptionCheckout() {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await request<{ keyId: string; subscription: { id: string } }>("/api/billing/subscription", { method: "POST", body: "{}" });
+      await loadScript("https://checkout.razorpay.com/v1/checkout.js");
+      const Razorpay = (window as typeof window & { Razorpay?: new (options: Record<string, unknown>) => { open: () => void } }).Razorpay;
+      if (!Razorpay) throw new Error("Razorpay checkout could not be loaded");
+      new Razorpay({
+        key: data.keyId,
+        subscription_id: data.subscription.id,
+        name: "FlowPilot AI",
+        description: "FlowPilot Pro subscription",
+        prefill: { name: user?.name || "", email: user?.email || "" },
+        theme: { color: "#2563eb" },
+        handler: () => setNotice("Payment authorized. Razorpay will confirm the subscription through the webhook.")
+      }).open();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start Razorpay checkout");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function connectIntegration(provider: string, title: string) {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await request<{ authorizationUrl?: string; mode: string }>(`/api/integrations/${provider}/connect`, { method: "POST", body: "{}" });
+      if (data.authorizationUrl) {
+        window.location.assign(data.authorizationUrl);
+        return;
+      }
+      setNotice(`${title} connected in local demo mode.`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not connect integration");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (!token) return <AuthScreen mode={authMode} setMode={setAuthMode} submit={authSubmit} launchDemo={launchDemo} loading={loading} error={error} />;
   if (!business) return <BusinessSetup submit={businessSubmit} loading={loading} error={error} user={user} />;
 
@@ -255,6 +307,7 @@ export default function Home() {
               <div className="mb-1 font-bold">{user?.id === "usr_demo_founder" ? "Demo workspace" : "Free plan"}</div>
               {user?.id === "usr_demo_founder" ? "Recording-ready sample data is active." : "Local MVP mode is active."}
             </div>
+            <div className="mt-3 text-xs text-slate-500">AI drafts: {systemStatus?.services.ai.provider || "checking"}</div>
             {user?.id === "usr_demo_founder" && <button className="secondary-button mt-3 w-full" disabled={loading} onClick={resetDemo} type="button"><RefreshCw size={14} />Reset demo</button>}
           </div>
         </aside>
@@ -273,9 +326,9 @@ export default function Home() {
           {page === "leads" && <LeadsPage leads={leads} submit={leadSubmit} loading={loading} />}
           {page === "approvals" && <ApprovalsPage approvals={approvals} resolve={resolveApproval} loading={loading} />}
           {page === "templates" && <TemplatesPage templates={templates} workflows={workflows} mutate={mutate} />}
-          {page === "integrations" && <IntegrationsPage integrations={integrations} mutate={mutate} />}
+          {page === "integrations" && <IntegrationsPage connect={connectIntegration} integrations={integrations} />}
           {page === "activity" && <ActivityPage rows={activity} />}
-          {page === "settings" && <SettingsPage business={business} submit={businessSubmit} loading={loading} />}
+          {page === "settings" && <SettingsPage business={business} submit={businessSubmit} loading={loading} startSubscriptionCheckout={startSubscriptionCheckout} systemStatus={systemStatus} />}
         </section>
       </div>
     </main>
@@ -316,19 +369,24 @@ function TemplatesPage({ templates, workflows, mutate }: { templates: Template[]
   return <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{templates.map((template) => { const active = workflows.some((row) => row.templateId === template.id); return <article className="panel p-5" key={template.id}><div className="flex items-start justify-between"><div className="grid size-10 place-items-center rounded-md bg-blue-50 text-blue-700"><Workflow size={18} /></div>{template.recommended && <Badge text="recommended" />}</div><h2 className="mt-4 font-bold">{template.title}</h2><p className="mt-2 min-h-16 text-sm leading-6 text-slate-500">{template.description}</p><button className={active ? "secondary-button mt-4" : "primary-button mt-4"} disabled={active} onClick={() => mutate("/api/workflows/from-template", { method: "POST", body: JSON.stringify({ templateId: template.id }) }, `${template.title} activated.`)} type="button">{active ? <CheckCircle2 size={15} /> : <Plus size={15} />}{active ? "Active" : "Activate"}</button></article>; })}</div>;
 }
 
-function IntegrationsPage({ integrations, mutate }: { integrations: Integration[]; mutate: (path: string, options: RequestInit, success: string) => Promise<void> }) {
+function IntegrationsPage({ integrations, connect }: { integrations: Integration[]; connect: (provider: string, title: string) => Promise<void> }) {
   const providers = [["gmail", Mail, "Gmail", "Monitor and send lead follow-up emails"], ["whatsapp", MessageSquare, "WhatsApp Business", "Route customer messages to your team"], ["hubspot", PlugZap, "HubSpot CRM", "Sync leads and follow-up activity"]] as const;
-  return <div className="grid gap-4 lg:grid-cols-3">{providers.map(([provider, Icon, title, description]) => { const connected = integrations.some((row) => row.provider === provider && row.status === "connected"); return <article className="panel p-5" key={provider}><Icon className="text-blue-600" size={22} /><h2 className="mt-4 font-bold">{title}</h2><p className="mt-2 min-h-16 text-sm leading-6 text-slate-500">{description}</p><button className={connected ? "secondary-button mt-4" : "primary-button mt-4"} disabled={connected} onClick={() => mutate(`/api/integrations/${provider}/connect`, { method: "POST", body: "{}" }, `${title} connected in local demo mode.`)} type="button">{connected ? <CheckCircle2 size={15} /> : <PlugZap size={15} />}{connected ? "Connected" : "Connect demo"}</button></article>; })}</div>;
+  return <div className="grid gap-4 lg:grid-cols-3">{providers.map(([provider, Icon, title, description]) => { const connected = integrations.some((row) => row.provider === provider && row.status === "connected"); return <article className="panel p-5" key={provider}><Icon className="text-blue-600" size={22} /><h2 className="mt-4 font-bold">{title}</h2><p className="mt-2 min-h-16 text-sm leading-6 text-slate-500">{description}</p><button className={connected ? "secondary-button mt-4" : "primary-button mt-4"} disabled={connected} onClick={() => connect(provider, title)} type="button">{connected ? <CheckCircle2 size={15} /> : <PlugZap size={15} />}{connected ? "Connected" : "Connect"}</button></article>; })}</div>;
 }
 
 function ActivityPage({ rows }: { rows: ActivityRow[] }) { return <ActivityCard rows={rows} />; }
-function SettingsPage({ business, submit, loading }: { business: Business; submit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean }) { return <form className="panel grid max-w-2xl gap-4 p-5 sm:grid-cols-2" onSubmit={submit}><div className="sm:col-span-2"><h2 className="font-bold">Business settings</h2><p className="mt-1 text-sm text-slate-500">Update the profile used to personalize AI drafts.</p></div><div className="sm:col-span-2"><Field defaultValue={business.name} label="Business name" name="name" required /></div><Select defaultValue={business.type} label="Business type" name="type" options={["agency", "e-commerce", "service_business", "startup", "solo_founder", "other"]} /><Select defaultValue={business.tone} label="Reply tone" name="tone" options={["professional", "friendly"]} /><button className="primary-button sm:col-span-2" disabled={loading} type="submit">{loading ? "Saving..." : "Save settings"}</button></form>; }
+function SettingsPage({ business, submit, loading, startSubscriptionCheckout, systemStatus }: { business: Business; submit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; startSubscriptionCheckout: () => Promise<void>; systemStatus: SystemStatus | null }) {
+  const services = systemStatus?.services;
+  return <div className="grid max-w-4xl gap-5 xl:grid-cols-[1.3fr_1fr]"><form className="panel grid gap-4 p-5 sm:grid-cols-2" onSubmit={submit}><div className="sm:col-span-2"><h2 className="font-bold">Business settings</h2><p className="mt-1 text-sm text-slate-500">Update the profile used to personalize AI drafts.</p></div><div className="sm:col-span-2"><Field defaultValue={business.name} label="Business name" name="name" required /></div><Select defaultValue={business.type} label="Business type" name="type" options={["agency", "e-commerce", "service_business", "startup", "solo_founder", "other"]} /><Select defaultValue={business.tone} label="Reply tone" name="tone" options={["professional", "friendly"]} /><button className="primary-button sm:col-span-2" disabled={loading} type="submit">{loading ? "Saving..." : "Save settings"}</button></form><article className="panel p-5"><h2 className="font-bold">Production readiness</h2><p className="mt-1 text-sm text-slate-500">Configured services detected by the API.</p><div className="mt-4 space-y-3"><ServiceRow label="AI drafts" value={services?.ai.provider || "checking"} ready={Boolean(services?.ai.configured)} /><ServiceRow label="Database" value={services?.database.provider || "checking"} ready={Boolean(services?.database.configured)} /><ServiceRow label="Razorpay billing" value={services?.billing.configured ? "configured" : "setup required"} ready={Boolean(services?.billing.configured)} /><ServiceRow label="Lead webhook" value={services?.leadWebhook.configured ? "secured" : "setup required"} ready={Boolean(services?.leadWebhook.configured)} /><ServiceRow label="Gmail OAuth" value={services?.gmail.configured ? "configured" : "setup required"} ready={Boolean(services?.gmail.configured)} /><ServiceRow label="HubSpot OAuth" value={services?.hubspot.configured ? "configured" : "setup required"} ready={Boolean(services?.hubspot.configured)} /><ServiceRow label="WhatsApp API" value={services?.whatsapp.configured ? "configured" : "setup required"} ready={Boolean(services?.whatsapp.configured)} /></div><button className="secondary-button mt-5 w-full" disabled={loading || !services?.billing.configured} onClick={startSubscriptionCheckout} type="button"><Settings size={15} />Open Razorpay checkout</button></article></div>;
+}
 
 function ActivityCard({ rows }: { rows: ActivityRow[] }) { return <article className="panel p-5"><h2 className="font-bold">Recent activity</h2><div className="mt-4 space-y-3">{rows.length ? rows.map((row) => <div className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm" key={row.id}><div><div className="font-semibold">{row.label}</div><div className="mt-1 text-xs text-slate-500">{row.source} - {new Date(row.createdAt).toLocaleString()}</div></div><Badge text={row.status} /></div>) : <p className="text-sm text-slate-500">Activity will appear as you use the workspace.</p>}</div></article>; }
 function ActionButton({ icon: Icon, label, onClick }: { icon: LucideIcon; label: string; onClick: () => void }) { return <button className="flex w-full items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-left text-sm font-semibold hover:bg-slate-50" onClick={onClick} type="button"><Icon className="text-blue-600" size={16} />{label}</button>; }
 function Field({ label, name, ...props }: { label: string; name: string } & React.InputHTMLAttributes<HTMLInputElement>) { return <label className="block text-sm font-semibold">{label}<input className="input mt-2" name={name} {...props} /></label>; }
 function Select({ label, name, options, ...props }: { label: string; name: string; options: string[] } & React.SelectHTMLAttributes<HTMLSelectElement>) { return <label className="block text-sm font-semibold">{label}<select className="input mt-2" name={name} {...props}>{options.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</select></label>; }
-function Badge({ text }: { text: string }) { const tone = text === "pending" ? "bg-amber-50 text-amber-700" : text === "error" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"; return <span className={`rounded-full px-2 py-1 text-xs font-semibold ${tone}`}>{text.replaceAll("_", " ")}</span>; }
+function Badge({ text }: { text: string }) { const tone = text === "pending" || text.includes("required") || text === "local" || text === "local json" || text === "checking" ? "bg-amber-50 text-amber-700" : text === "error" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"; return <span className={`rounded-full px-2 py-1 text-xs font-semibold ${tone}`}>{text.replaceAll("_", " ")}</span>; }
 function Banner({ text, tone }: { text: string; tone: "success" | "error" }) { return <div className={`mb-4 rounded-md border px-4 py-3 text-sm ${tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-800"}`}>{text}</div>; }
 function Empty({ text }: { text: string }) { return <div className="panel p-8 text-center text-sm text-slate-500">{text}</div>; }
+function ServiceRow({ label, value, ready }: { label: string; value: string; ready: boolean }) { return <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3 text-sm"><span className="font-semibold">{label}</span><Badge text={ready ? value : `${value}`} /></div>; }
 function pageTitle(page: Page) { return ({ dashboard: "Operations overview", automations: "Automation status", leads: "Lead inbox", approvals: "Approval queue", templates: "Workflow templates", integrations: "Connected tools", activity: "Activity log", settings: "Workspace settings" })[page]; }
+function loadScript(src: string) { return new Promise<void>((resolve, reject) => { const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`); if (existing) return resolve(); const script = document.createElement("script"); script.src = src; script.onload = () => resolve(); script.onerror = () => reject(new Error("Could not load payment checkout")); document.body.appendChild(script); }); }

@@ -1,4 +1,5 @@
 const assert = require("assert");
+const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -11,7 +12,7 @@ const testStore = path.join(os.tmpdir(), `flowpilot-store-${Date.now()}.json`);
 fs.copyFileSync(fixtureStore, testStore);
 const server = spawn(process.execPath, ["backend/server.js"], {
   cwd: process.cwd(),
-  env: { ...process.env, PORT: String(PORT), JWT_SECRET: "test-secret", STORE_PATH: testStore },
+  env: { ...process.env, PORT: String(PORT), JWT_SECRET: "test-secret", STORE_PATH: testStore, GROQ_API_KEY: "", LEAD_WEBHOOK_SECRET: "lead-test-secret", RAZORPAY_WEBHOOK_SECRET: "razor-test-secret", WHATSAPP_VERIFY_TOKEN: "whatsapp-test-secret" },
   stdio: ["ignore", "pipe", "pipe"]
 });
 
@@ -34,6 +35,15 @@ async function request(path, options = {}) {
     const health = await request("/health");
     assert.equal(health.response.status, 200);
     assert.equal(health.body.ok, true);
+
+    const status = await request("/api/system/status");
+    assert.equal(status.response.status, 200);
+    assert.equal(status.body.services.ai.provider, "local");
+    assert.equal(status.body.services.leadWebhook.configured, true);
+
+    const whatsappVerification = await fetch(`${baseUrl}/api/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=whatsapp-test-secret&hub.challenge=verified`);
+    assert.equal(whatsappVerification.status, 200);
+    assert.equal(await whatsappVerification.text(), "verified");
 
     const email = `test-${Date.now()}@example.com`;
     const signup = await request("/api/auth/signup", {
@@ -63,6 +73,10 @@ async function request(path, options = {}) {
     assert.equal(workflow.response.status, 201);
     assert.equal(workflow.body.workflow.status, "active");
 
+    const demoConnector = await request("/api/integrations/gmail/connect", { method: "POST", headers: auth, body: "{}" });
+    assert.equal(demoConnector.response.status, 200);
+    assert.equal(demoConnector.body.mode, "demo");
+
     const lead = await request("/api/leads", {
       method: "POST",
       headers: auth,
@@ -87,12 +101,37 @@ async function request(path, options = {}) {
     assert.equal(approval.response.status, 200);
     assert.equal(approval.body.approval.status, "approved");
     assert.equal(approval.body.approval.draft, "Edited follow-up draft");
+    assert.equal(approval.body.approval.deliveryProvider, "simulation");
 
     const dashboard = await request("/api/dashboard", { headers: auth });
     assert.equal(dashboard.response.status, 200);
     assert.equal(dashboard.body.metrics.activeAutomations >= 1, true);
     assert.equal(dashboard.body.metrics.pendingApprovals, 0);
     assert.equal(dashboard.body.workflows[0].runs, 1);
+
+    const webhookLead = await request(`/api/webhooks/lead/${signup.body.user.id}`, {
+      method: "POST",
+      headers: { "x-flowpilot-webhook-secret": "lead-test-secret" },
+      body: JSON.stringify({ name: "Webhook Lead", email: "webhook@example.com", message: "Please send information.", source: "website" })
+    });
+    assert.equal(webhookLead.response.status, 201);
+    assert.equal(webhookLead.body.approval.aiProvider, "local");
+
+    const webhookPayload = JSON.stringify({ event: "subscription.activated", payload: { subscription: { entity: { id: "sub_test", status: "active", notes: { flowpilot_user_id: signup.body.user.id } } } } });
+    const webhookSignature = crypto.createHmac("sha256", "razor-test-secret").update(webhookPayload).digest("hex");
+    const razorpay = await request("/api/webhooks/razorpay", {
+      method: "POST",
+      headers: { "x-razorpay-signature": webhookSignature, "x-razorpay-event-id": "evt_test_1" },
+      body: webhookPayload
+    });
+    assert.equal(razorpay.response.status, 200);
+
+    const duplicateRazorpay = await request("/api/webhooks/razorpay", {
+      method: "POST",
+      headers: { "x-razorpay-signature": webhookSignature, "x-razorpay-event-id": "evt_test_1" },
+      body: webhookPayload
+    });
+    assert.equal(duplicateRazorpay.body.duplicate, true);
 
     const demo = await request("/api/demo/start", { method: "POST", body: "{}" });
     assert.equal(demo.response.status, 200);

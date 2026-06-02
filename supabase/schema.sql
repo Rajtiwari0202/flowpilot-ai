@@ -83,12 +83,30 @@ create table if not exists public.integrations (
   unique (owner_id, provider)
 );
 
+create table if not exists public.billing_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  provider text not null default 'razorpay',
+  provider_subscription_id text not null unique,
+  status text not null default 'created',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.webhook_events (
+  id text primary key,
+  provider text not null,
+  event_type text,
+  processed_at timestamptz not null default now()
+);
+
 alter table public.businesses enable row level security;
 alter table public.workflows enable row level security;
 alter table public.leads enable row level security;
 alter table public.approvals enable row level security;
 alter table public.activity_logs enable row level security;
 alter table public.integrations enable row level security;
+alter table public.billing_subscriptions enable row level security;
 
 create policy "Owners manage businesses" on public.businesses using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
 create policy "Owners manage workflows" on public.workflows using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
@@ -96,6 +114,7 @@ create policy "Owners manage leads" on public.leads using (auth.uid() = owner_id
 create policy "Owners manage approvals" on public.approvals using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
 create policy "Owners view activity" on public.activity_logs for select using (auth.uid() = owner_id);
 create policy "Owners manage integrations" on public.integrations using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+create policy "Owners view subscriptions" on public.billing_subscriptions for select using (auth.uid() = owner_id);
 
 insert into public.workflow_templates (id, title, description, category, recommended, trigger_key, actions)
 values

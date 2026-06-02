@@ -8,6 +8,9 @@ const ROOT = path.resolve(__dirname, "..");
 const SEED_STORE_PATH = path.join(__dirname, "data", "store.json");
 const STORE_PATH = process.env.STORE_PATH || path.join(__dirname, "data", "store.local.json");
 const JWT_SECRET = process.env.JWT_SECRET || "flowpilot-local-dev-secret";
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const API_PUBLIC_URL = process.env.API_PUBLIC_URL || `http://localhost:${PORT}`;
+const APP_ORIGIN = process.env.APP_ORIGIN || "http://localhost:3000";
 
 function readStore() {
   if (!fs.existsSync(STORE_PATH)) {
@@ -68,7 +71,7 @@ function verifyToken(token) {
 function send(res, status, payload, headers = {}) {
   const isJson = typeof payload !== "string" && !Buffer.isBuffer(payload);
   res.writeHead(status, {
-    "Access-Control-Allow-Origin": process.env.APP_ORIGIN || "*",
+    "Access-Control-Allow-Origin": APP_ORIGIN,
     "Access-Control-Allow-Headers": "authorization, content-type",
     "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
     "Content-Type": isJson ? "application/json; charset=utf-8" : headers["Content-Type"] || "text/plain; charset=utf-8",
@@ -77,16 +80,28 @@ function send(res, status, payload, headers = {}) {
   res.end(isJson ? JSON.stringify(payload) : payload);
 }
 
-async function parseBody(req) {
+async function readRawBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
-  if (!chunks.length) return {};
-  const raw = Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function redirect(res, location) {
+  res.writeHead(302, { Location: location });
+  res.end();
+}
+
+function parseJson(raw) {
+  if (!raw) return {};
   try {
     return JSON.parse(raw);
   } catch {
     return {};
   }
+}
+
+async function parseBody(req) {
+  return parseJson(await readRawBody(req));
 }
 
 function getAuthUser(req, store) {
@@ -140,14 +155,218 @@ function dashboardFor(store, user) {
   };
 }
 
+function encryptSecret(value) {
+  const iv = crypto.randomBytes(12);
+  const key = crypto.createHash("sha256").update(process.env.TOKEN_ENCRYPTION_KEY || JWT_SECRET).digest();
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), "utf8"), cipher.final()]);
+  return `${iv.toString("hex")}:${cipher.getAuthTag().toString("hex")}:${encrypted.toString("hex")}`;
+}
+
+function decryptSecret(value) {
+  if (!value) return null;
+  const [iv, tag, encrypted] = String(value).split(":");
+  const key = crypto.createHash("sha256").update(process.env.TOKEN_ENCRYPTION_KEY || JWT_SECRET).digest();
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "hex"));
+  decipher.setAuthTag(Buffer.from(tag, "hex"));
+  return JSON.parse(Buffer.concat([decipher.update(Buffer.from(encrypted, "hex")), decipher.final()]).toString("utf8"));
+}
+
+function upsertIntegration(store, userId, provider, values = {}) {
+  let integration = store.integrations.find((item) => item.userId === userId && item.provider === provider);
+  if (!integration) {
+    integration = { id: id("int"), userId, provider, createdAt: now() };
+    store.integrations.push(integration);
+  }
+  Object.assign(integration, values, { updatedAt: now() });
+  return integration;
+}
+
+function oauthRedirectUri(provider) {
+  return `${API_PUBLIC_URL}/api/oauth/${provider}/callback`;
+}
+
+function integrationConfig(provider) {
+  if (provider === "gmail") return { clientId: process.env.GMAIL_CLIENT_ID, clientSecret: process.env.GMAIL_CLIENT_SECRET };
+  if (provider === "hubspot") return { clientId: process.env.HUBSPOT_CLIENT_ID, clientSecret: process.env.HUBSPOT_CLIENT_SECRET };
+  return {};
+}
+
+function oauthAuthorizationUrl(provider, userId) {
+  const config = integrationConfig(provider);
+  if (!config.clientId || !config.clientSecret) return null;
+  const state = signToken({ sub: userId, provider });
+  if (provider === "gmail") {
+    const params = new URLSearchParams({ client_id: config.clientId, redirect_uri: oauthRedirectUri(provider), response_type: "code", access_type: "offline", prompt: "consent", scope: "https://www.googleapis.com/auth/gmail.send", state });
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+  }
+  if (provider === "hubspot") {
+    const params = new URLSearchParams({ client_id: config.clientId, redirect_uri: oauthRedirectUri(provider), scope: "crm.objects.contacts.read crm.objects.contacts.write", state });
+    return `https://app.hubspot.com/oauth/authorize?${params}`;
+  }
+  return null;
+}
+
+async function exchangeOauthCode(provider, code) {
+  const config = integrationConfig(provider);
+  const values = { code, client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: oauthRedirectUri(provider), grant_type: "authorization_code" };
+  const endpoint = provider === "gmail" ? "https://oauth2.googleapis.com/token" : "https://api.hubapi.com/oauth/v3/token";
+  const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(values), signal: AbortSignal.timeout(12000) });
+  const tokens = await response.json();
+  if (!response.ok) throw new Error(tokens.error_description || tokens.error || `${provider} OAuth exchange failed`);
+  return { ...tokens, obtainedAt: Date.now() };
+}
+
+async function getIntegrationAccessToken(integration) {
+  const tokens = decryptSecret(integration.encryptedCredentials);
+  if (!tokens?.access_token) return null;
+  const expiresAt = Number(tokens.obtainedAt || 0) + Number(tokens.expires_in || 0) * 1000;
+  if (!tokens.refresh_token || !tokens.expires_in || expiresAt > Date.now() + 60000) return tokens.access_token;
+  const config = integrationConfig(integration.provider);
+  const endpoint = integration.provider === "gmail" ? "https://oauth2.googleapis.com/token" : "https://api.hubapi.com/oauth/v3/token";
+  const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, refresh_token: tokens.refresh_token, grant_type: "refresh_token" }), signal: AbortSignal.timeout(12000) });
+  const refreshed = await response.json();
+  if (!response.ok) throw new Error(`${integration.provider} token refresh failed`);
+  integration.encryptedCredentials = encryptSecret({ ...tokens, ...refreshed, refresh_token: refreshed.refresh_token || tokens.refresh_token, obtainedAt: Date.now() });
+  integration.updatedAt = now();
+  return refreshed.access_token;
+}
+
+function encodeEmail({ to, subject, body }) {
+  return Buffer.from(`To: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n${body}`).toString("base64url");
+}
+
+async function sendGmailFollowUp(store, user, lead, draft) {
+  if (user.id === "usr_demo_founder" || !lead?.email) return { provider: "simulation" };
+  const integration = store.integrations.find((item) => item.userId === user.id && item.provider === "gmail" && item.status === "connected" && item.encryptedCredentials);
+  if (!integration) return { provider: "simulation" };
+  const accessToken = await getIntegrationAccessToken(integration);
+  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ raw: encodeEmail({ to: lead.email, subject: `Following up from ${getUserBusiness(store, user.id)?.name || "our team"}`, body: draft }) }),
+    signal: AbortSignal.timeout(12000)
+  });
+  if (!response.ok) throw new Error(`Gmail send failed: ${response.status}`);
+  return { provider: "gmail", message: await response.json() };
+}
+
+async function syncHubspotLead(store, user, lead) {
+  if (user.id === "usr_demo_founder") return { provider: "simulation" };
+  const integration = store.integrations.find((item) => item.userId === user.id && item.provider === "hubspot" && item.status === "connected" && item.encryptedCredentials);
+  if (!integration) return { provider: "simulation" };
+  const accessToken = await getIntegrationAccessToken(integration);
+  const response = await fetch("https://api.hubapi.com/crm/v3/objects/contacts", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ properties: { email: lead.email || "", firstname: lead.name, phone: lead.phone || "" } }),
+    signal: AbortSignal.timeout(12000)
+  });
+  if (!response.ok && response.status !== 409) throw new Error(`HubSpot contact sync failed: ${response.status}`);
+  return { provider: "hubspot" };
+}
+
 function userRows(store, collection, userId) {
   return store[collection].filter((item) => item.userId === userId);
 }
 
-function draftFollowUp({ leadName = "there", businessName = "our team", tone = "professional", message = "" }) {
+function fallbackDraftFollowUp({ leadName = "there", businessName = "our team", tone = "professional", message = "" }) {
   const opener = tone === "friendly" ? "Thanks so much for reaching out" : "Thank you for your inquiry";
   const detail = message ? ` I saw your note about "${message.slice(0, 120)}".` : "";
   return `${opener}, ${leadName}.${detail} ${businessName} can help with this. Would you be open to a quick call so we can understand your needs and suggest the best next step?`;
+}
+
+async function draftFollowUp(input) {
+  const fallback = fallbackDraftFollowUp(input);
+  if (!process.env.GROQ_API_KEY) return { draft: fallback, provider: "local" };
+
+  const prompt = [
+    `Write a concise ${input.tone || "professional"} lead follow-up email.`,
+    `Business: ${input.businessName || "our team"}.`,
+    `Lead: ${input.leadName || "there"}.`,
+    `Inquiry: ${input.message || "No inquiry details provided."}`,
+    "Return only the email body. Keep it under 140 words. Suggest a short call as the next step."
+  ].join("\n");
+
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: [
+          { role: "system", content: "You write clear, human business follow-up emails. Never invent facts." },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.4,
+        max_completion_tokens: 240
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!response.ok) throw new Error(`Groq request failed: ${response.status}`);
+    const data = await response.json();
+    const draft = data.choices?.[0]?.message?.content?.trim();
+    if (!draft) throw new Error("Groq returned an empty draft");
+    return { draft, provider: "groq" };
+  } catch (error) {
+    console.error("Groq draft fallback:", error.message);
+    return { draft: fallback, provider: "local_fallback" };
+  }
+}
+
+function systemStatus() {
+  return {
+    mode: process.env.NODE_ENV === "production" ? "production" : "development",
+    services: {
+      ai: { provider: process.env.GROQ_API_KEY ? "groq" : "local", configured: Boolean(process.env.GROQ_API_KEY) },
+      billing: { provider: "razorpay", configured: Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET && process.env.RAZORPAY_PLAN_ID) },
+      database: { provider: process.env.DATABASE_URL ? "supabase_postgres" : "local_json", configured: Boolean(process.env.DATABASE_URL) },
+      leadWebhook: { configured: Boolean(process.env.LEAD_WEBHOOK_SECRET) },
+      gmail: { configured: Boolean(process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET) },
+      hubspot: { configured: Boolean(process.env.HUBSPOT_CLIENT_ID && process.env.HUBSPOT_CLIENT_SECRET) },
+      whatsapp: { configured: Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_VERIFY_TOKEN && process.env.WHATSAPP_APP_SECRET && process.env.WHATSAPP_OWNER_USER_ID) }
+    }
+  };
+}
+
+async function createLeadApproval(store, user, body) {
+  const lead = {
+    id: id("lead"),
+    userId: user.id,
+    name: body.name || "New lead",
+    email: body.email || null,
+    phone: body.phone || null,
+    message: body.message || "",
+    source: body.source || "manual",
+    status: "new",
+    createdAt: now()
+  };
+  store.leads.unshift(lead);
+  const business = getUserBusiness(store, user.id);
+  const generated = await draftFollowUp({ leadName: lead.name, businessName: business?.name, tone: business?.tone, message: lead.message });
+  const approval = { id: id("appr"), userId: user.id, leadId: lead.id, status: "pending", kind: "follow_up_draft", draft: generated.draft, aiProvider: generated.provider, createdAt: now() };
+  store.approvals.unshift(approval);
+  logActivity(store, { userId: user.id, type: "lead.created", label: `${lead.name} awaiting approval`, source: lead.source, status: "pending" });
+  try {
+    const sync = await syncHubspotLead(store, user, lead);
+    if (sync.provider === "hubspot") logActivity(store, { userId: user.id, type: "integration.synced", label: `${lead.name} synced to HubSpot`, source: "hubspot" });
+  } catch (error) {
+    console.error("HubSpot sync:", error.message);
+    logActivity(store, { userId: user.id, type: "integration.error", label: `${lead.name} could not sync to HubSpot`, source: "hubspot", status: "error" });
+  }
+  writeStore(store);
+  return { lead, approval };
+}
+
+function signaturesMatch(raw, signature, secret) {
+  if (!raw || !signature || !secret) return false;
+  const expected = crypto.createHmac("sha256", secret).update(raw).digest("hex");
+  const received = Buffer.from(String(signature).replace(/^sha256=/, ""));
+  const candidate = Buffer.from(expected);
+  return received.length === candidate.length && crypto.timingSafeEqual(received, candidate);
 }
 
 function seedDemoWorkspace(store) {
@@ -194,9 +413,11 @@ function seedDemoWorkspace(store) {
 async function route(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const store = readStore();
+  store.processedWebhookEvents ||= [];
 
   if (req.method === "OPTIONS") return send(res, 204, "");
   if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true, service: "flowpilot-api", time: now() });
+  if (req.method === "GET" && url.pathname === "/api/system/status") return send(res, 200, systemStatus());
 
   if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/flowdesk_full_frontend.html")) {
     const html = fs.readFileSync(path.join(ROOT, "flowdesk_full_frontend.html"));
@@ -208,9 +429,81 @@ async function route(req, res) {
     return send(res, 200, { user: publicUser(user), token: signToken({ sub: user.id }), demo: true });
   }
 
+  const leadWebhookMatch = url.pathname.match(/^\/api\/webhooks\/lead\/([^/]+)$/);
+  if (req.method === "POST" && leadWebhookMatch) {
+    if (!process.env.LEAD_WEBHOOK_SECRET || req.headers["x-flowpilot-webhook-secret"] !== process.env.LEAD_WEBHOOK_SECRET) {
+      return send(res, 401, { error: "invalid lead webhook secret" });
+    }
+    const user = store.users.find((item) => item.id === leadWebhookMatch[1]);
+    if (!user) return send(res, 404, { error: "webhook owner not found" });
+    return send(res, 201, await createLeadApproval(store, user, await parseBody(req)));
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/webhooks/whatsapp") {
+    if (url.searchParams.get("hub.mode") === "subscribe" && url.searchParams.get("hub.verify_token") === process.env.WHATSAPP_VERIFY_TOKEN) {
+      return send(res, 200, url.searchParams.get("hub.challenge") || "");
+    }
+    return send(res, 403, { error: "invalid WhatsApp verification token" });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/webhooks/whatsapp") {
+    const raw = await readRawBody(req);
+    if (!signaturesMatch(raw, req.headers["x-hub-signature-256"], process.env.WHATSAPP_APP_SECRET)) {
+      return send(res, 401, { error: "invalid WhatsApp webhook signature" });
+    }
+    const user = store.users.find((item) => item.id === process.env.WHATSAPP_OWNER_USER_ID);
+    if (!user) return send(res, 503, { error: "WhatsApp workspace owner is not configured" });
+    const body = parseJson(raw);
+    const messages = (body.entry || []).flatMap((entry) => (entry.changes || []).flatMap((change) => change.value?.messages || []));
+    for (const message of messages) {
+      await createLeadApproval(store, user, { name: message.from || "WhatsApp lead", phone: message.from || null, message: message.text?.body || "", source: "WhatsApp" });
+    }
+    return send(res, 200, { ok: true, messagesProcessed: messages.length });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/webhooks/razorpay") {
+    const raw = await readRawBody(req);
+    if (!signaturesMatch(raw, req.headers["x-razorpay-signature"], process.env.RAZORPAY_WEBHOOK_SECRET)) {
+      return send(res, 401, { error: "invalid Razorpay webhook signature" });
+    }
+    const eventId = String(req.headers["x-razorpay-event-id"] || "");
+    if (eventId && store.processedWebhookEvents.includes(eventId)) return send(res, 200, { ok: true, duplicate: true });
+    const body = parseJson(raw);
+    const subscription = body.payload?.subscription?.entity;
+    const userId = subscription?.notes?.flowpilot_user_id;
+    const user = store.users.find((item) => item.id === userId);
+    if (user && subscription) {
+      user.plan = subscription.status === "active" ? "pro" : user.plan;
+      user.billing = { provider: "razorpay", subscriptionId: subscription.id, status: subscription.status, updatedAt: now() };
+      logActivity(store, { userId: user.id, type: `billing.${subscription.status}`, label: `Razorpay subscription ${subscription.status}`, source: "razorpay" });
+    }
+    if (eventId) store.processedWebhookEvents.push(eventId);
+    writeStore(store);
+    return send(res, 200, { ok: true });
+  }
+
+  const oauthCallbackMatch = url.pathname.match(/^\/api\/oauth\/(gmail|hubspot)\/callback$/);
+  if (req.method === "GET" && oauthCallbackMatch) {
+    const provider = oauthCallbackMatch[1];
+    const state = verifyToken(url.searchParams.get("state"));
+    if (!state || state.provider !== provider) return send(res, 401, { error: "invalid OAuth state" });
+    try {
+      const tokens = await exchangeOauthCode(provider, url.searchParams.get("code"));
+      upsertIntegration(store, state.sub, provider, { status: "connected", encryptedCredentials: encryptSecret(tokens) });
+      logActivity(store, { userId: state.sub, type: "integration.connected", label: `${provider} connected`, source: "oauth" });
+      writeStore(store);
+      return redirect(res, `${APP_ORIGIN}/?integration=${provider}_connected`);
+    } catch (error) {
+      console.error(`${provider} OAuth callback:`, error.message);
+      return redirect(res, `${APP_ORIGIN}/?integration=${provider}_failed`);
+    }
+  }
+
   if (req.method === "POST" && url.pathname === "/api/auth/signup") {
     const body = await parseBody(req);
     if (!body.email || !body.password || !body.name) return send(res, 400, { error: "name, email, and password are required" });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) return send(res, 400, { error: "enter a valid email address" });
+    if (String(body.password).length < 8) return send(res, 400, { error: "password must be at least 8 characters" });
     if (store.users.some((user) => user.email.toLowerCase() === body.email.toLowerCase())) return send(res, 409, { error: "email already exists" });
     const user = { id: id("usr"), name: body.name, email: body.email.toLowerCase(), passwordHash: hashPassword(body.password), plan: "free", createdAt: now() };
     store.users.push(user);
@@ -288,6 +581,7 @@ async function route(req, res) {
     const body = await parseBody(req);
     const template = store.templates.find((item) => item.id === body.templateId);
     if (!template) return send(res, 404, { error: "template not found" });
+    if (store.workflows.some((item) => item.userId === user.id && item.templateId === template.id)) return send(res, 409, { error: "workflow template is already active" });
     const workflow = {
       id: id("wf"),
       userId: user.id,
@@ -318,27 +612,8 @@ async function route(req, res) {
     return send(res, 200, { workflow });
   }
 
-  if (req.method === "POST" && (url.pathname === "/api/leads" || url.pathname === "/api/webhooks/lead")) {
-    const body = await parseBody(req);
-    const lead = {
-      id: id("lead"),
-      userId: user.id,
-      name: body.name || "New lead",
-      email: body.email || null,
-      phone: body.phone || null,
-      message: body.message || "",
-      source: body.source || "manual",
-      status: "new",
-      createdAt: now()
-    };
-    store.leads.unshift(lead);
-    const business = getUserBusiness(store, user.id);
-    const draft = draftFollowUp({ leadName: lead.name, businessName: business?.name, tone: business?.tone, message: lead.message });
-    const approval = { id: id("appr"), userId: user.id, leadId: lead.id, status: "pending", kind: "follow_up_draft", draft, createdAt: now() };
-    store.approvals.unshift(approval);
-    logActivity(store, { userId: user.id, type: "lead.created", label: `${lead.name} awaiting approval`, source: lead.source, status: "pending" });
-    writeStore(store);
-    return send(res, 201, { lead, approval });
+  if (req.method === "POST" && url.pathname === "/api/leads") {
+    return send(res, 201, await createLeadApproval(store, user, await parseBody(req)));
   }
 
   if (req.method === "GET" && url.pathname === "/api/activity") {
@@ -356,6 +631,8 @@ async function route(req, res) {
     const lead = store.leads.find((item) => item.id === approval.leadId);
     if (lead) lead.status = approval.status === "approved" ? "follow_up_sent" : "needs_review";
     if (approval.status === "approved") {
+      const delivery = await sendGmailFollowUp(store, user, lead, approval.draft);
+      approval.deliveryProvider = delivery.provider;
       const workflow = store.workflows.find((item) => item.userId === user.id && item.status === "active");
       if (workflow) workflow.runs += 1;
     }
@@ -367,32 +644,36 @@ async function route(req, res) {
   const integrationMatch = url.pathname.match(/^\/api\/integrations\/([^/]+)\/connect$/);
   if (req.method === "POST" && integrationMatch) {
     const provider = integrationMatch[1];
-    let integration = store.integrations.find((item) => item.userId === user.id && item.provider === provider);
-    if (!integration) {
-      integration = { id: id("int"), userId: user.id, provider, createdAt: now() };
-      store.integrations.push(integration);
-    }
-    integration.status = "connected";
-    integration.updatedAt = now();
+    const authorizationUrl = oauthAuthorizationUrl(provider, user.id);
+    if (authorizationUrl) return send(res, 200, { provider, authorizationUrl, mode: "oauth" });
+    const integration = upsertIntegration(store, user.id, provider, { status: "connected" });
     logActivity(store, { userId: user.id, type: "integration.connected", label: `${provider} connected`, source: "integrations" });
     writeStore(store);
-    return send(res, 200, { integration });
+    return send(res, 200, { integration, mode: "demo" });
   }
 
   if (req.method === "POST" && url.pathname === "/api/ai/draft-follow-up") {
     const body = await parseBody(req);
     const business = getUserBusiness(store, user.id);
-    return send(res, 200, { draft: draftFollowUp({ ...body, businessName: business?.name, tone: business?.tone }) });
+    return send(res, 200, await draftFollowUp({ ...body, businessName: business?.name, tone: business?.tone }));
   }
 
-  if (req.method === "POST" && url.pathname === "/api/billing/portal") {
-    return send(res, 200, {
-      provider: "razorpay",
-      mode: process.env.RAZORPAY_KEY_ID ? "configured" : "demo",
-      message: process.env.RAZORPAY_KEY_ID
-        ? "Razorpay is configured. Create subscription checkout before enabling live billing."
-        : "Razorpay test keys are not configured yet."
+  if (req.method === "POST" && url.pathname === "/api/billing/subscription") {
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET || !process.env.RAZORPAY_PLAN_ID) {
+      return send(res, 503, { error: "Razorpay subscription keys and plan ID are not configured" });
+    }
+    const credentials = Buffer.from(`${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`).toString("base64");
+    const response = await fetch("https://api.razorpay.com/v1/subscriptions", {
+      method: "POST",
+      headers: { Authorization: `Basic ${credentials}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ plan_id: process.env.RAZORPAY_PLAN_ID, total_count: 12, quantity: 1, customer_notify: true, notes: { flowpilot_user_id: user.id } }),
+      signal: AbortSignal.timeout(12000)
     });
+    const subscription = await response.json();
+    if (!response.ok) return send(res, response.status, { error: subscription.error?.description || "Could not create Razorpay subscription" });
+    user.billing = { provider: "razorpay", subscriptionId: subscription.id, status: subscription.status, updatedAt: now() };
+    writeStore(store);
+    return send(res, 201, { keyId: process.env.RAZORPAY_KEY_ID, subscription });
   }
 
   return send(res, 404, { error: "not found" });

@@ -32,17 +32,19 @@ The original prototype remains available from the backend at `http://localhost:8
 node backend/test.js
 ```
 
-## MVP Backend Includes
+## Product Backend Includes
 
 - Signup/login with local JWT-style bearer tokens
 - Business onboarding profile
 - Template library
 - Workflow activation and pause/resume
-- Lead intake and webhook intake
-- AI follow-up draft stub
+- Lead intake and secret-protected public webhook intake
+- Groq AI follow-up drafts with a local fallback
 - Approval queue
 - Dashboard metrics and activity log
-- Integration and billing placeholders
+- Razorpay subscription creation, Checkout handoff, and signed webhook processing
+- Duplicate Razorpay webhook protection
+- Production-readiness status in workspace settings
 
 ## Supabase Migration
 
@@ -65,7 +67,7 @@ The Next.js workspace now supports a complete local demonstration:
 6. Approve the draft to simulate sending it.
 7. Confirm dashboard metrics, workflow runs, and activity logs update.
 
-External tools are still demo-mode connectors until their credentials are configured. Production rollout still requires Supabase Auth/Postgres, a real AI provider call, Gmail OAuth and sending, Razorpay subscriptions, webhook verification, and deployment configuration.
+Gmail, WhatsApp, and HubSpot buttons remain demo connectors until their OAuth flows are configured. Groq AI and Razorpay subscriptions become live automatically when their environment variables are provided. Production rollout still requires the Supabase repository migration, provider OAuth applications, and deployment configuration.
 
 ## Recording Demo
 
@@ -99,3 +101,68 @@ RAZORPAY_KEY_SECRET=
 RAZORPAY_WEBHOOK_SECRET=
 RAZORPAY_PLAN_ID=
 ```
+
+## Production Configuration
+
+Create your local environment file:
+
+```bash
+copy .env.example .env
+```
+
+Required before deploying:
+
+```env
+APP_ORIGIN=https://your-frontend-domain.example
+API_PUBLIC_URL=https://your-api-domain.example
+JWT_SECRET=generate-a-long-random-secret
+TOKEN_ENCRYPTION_KEY=generate-a-separate-long-random-secret
+GROQ_API_KEY=
+LEAD_WEBHOOK_SECRET=generate-a-separate-random-secret
+RAZORPAY_KEY_ID=
+RAZORPAY_KEY_SECRET=
+RAZORPAY_WEBHOOK_SECRET=
+RAZORPAY_PLAN_ID=
+```
+
+Generate secrets with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+Use this endpoint for website lead ingestion:
+
+```text
+POST /api/webhooks/lead/:workspaceUserId
+X-FlowPilot-Webhook-Secret: your-lead-webhook-secret
+```
+
+Configure Razorpay to send subscription webhook events to:
+
+```text
+POST /api/webhooks/razorpay
+```
+
+The backend validates `X-Razorpay-Signature` and deduplicates events using `X-Razorpay-Event-Id`.
+
+Gmail and HubSpot OAuth callback URLs:
+
+```text
+GET /api/oauth/gmail/callback
+GET /api/oauth/hubspot/callback
+```
+
+WhatsApp Cloud API webhook URL:
+
+```text
+GET|POST /api/webhooks/whatsapp
+```
+
+Set `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, and `WHATSAPP_OWNER_USER_ID` before registering the webhook in Meta.
+
+## Remaining Production Work
+
+- Replace the JSON development repository with Supabase/Postgres queries using `supabase/schema.sql`.
+- Add WhatsApp outbound replies if you want approvals to answer on WhatsApp as well as Gmail.
+- Deploy the API and web app, then configure public webhook URLs.

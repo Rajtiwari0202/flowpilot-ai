@@ -36,6 +36,12 @@ async function request(path, options = {}) {
     assert.equal(health.response.status, 200);
     assert.equal(health.body.ok, true);
 
+    const rootProbe = await fetch(`${baseUrl}/`, { method: "HEAD" });
+    assert.equal(rootProbe.status, 200);
+
+    const favicon = await fetch(`${baseUrl}/favicon.ico`);
+    assert.equal(favicon.status, 204);
+
     const status = await request("/api/system/status");
     assert.equal(status.response.status, 200);
     assert.equal(status.body.services.ai.provider, "local");

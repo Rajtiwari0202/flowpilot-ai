@@ -534,13 +534,17 @@ async function route(req, res) {
   store.processedWebhookEvents ||= [];
 
   if (req.method === "OPTIONS") return send(res, 204, "");
-  if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true, service: "flowpilot-api", time: now() });
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname === "/health") return send(res, 200, { ok: true, service: "flowpilot-api", time: now() });
   if (req.method === "GET" && url.pathname === "/api/system/status") return send(res, 200, systemStatus());
+
+  if (req.method === "HEAD" && url.pathname === "/") return send(res, 200, "");
 
   if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/flowdesk_full_frontend.html")) {
     const html = fs.readFileSync(path.join(ROOT, "flowdesk_full_frontend.html"));
     return send(res, 200, html, { "Content-Type": "text/html; charset=utf-8" });
   }
+
+  if (req.method === "GET" && url.pathname === "/favicon.ico") return send(res, 204, "");
 
   if (req.method === "POST" && url.pathname === "/api/demo/start") {
     if (!PUBLIC_SANDBOX_ENABLED) return send(res, 404, { error: "public sandbox is disabled" });
@@ -698,7 +702,7 @@ async function route(req, res) {
 
   const user = getAuthUser(req, store);
   if (url.pathname.startsWith("/api/") && !user) return send(res, 401, { error: "missing or invalid bearer token" });
-  if (process.env.NODE_ENV === "production" && !user.emailVerified && url.pathname !== "/api/me") return send(res, 403, { error: "verify your email before using the workspace" });
+  if (process.env.NODE_ENV === "production" && user && !user.emailVerified && url.pathname !== "/api/me") return send(res, 403, { error: "verify your email before using the workspace" });
 
   if (req.method === "GET" && url.pathname === "/api/me") return send(res, 200, { user: publicUser(user), business: getUserBusiness(store, user.id) });
 

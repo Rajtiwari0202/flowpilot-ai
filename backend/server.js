@@ -13,6 +13,10 @@ const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 const API_PUBLIC_URL = process.env.API_PUBLIC_URL || `http://localhost:${PORT}`;
 const APP_ORIGIN = process.env.APP_ORIGIN || "http://localhost:3000";
 const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES || 1024 * 1024);
+const PUBLIC_SANDBOX_ENABLED = process.env.PUBLIC_SANDBOX_ENABLED !== "false";
+const BILLING_DISABLED = process.env.DISABLE_BILLING !== "false";
+const REAL_EMAIL_SEND_DISABLED = process.env.DISABLE_REAL_EMAIL_SEND !== "false";
+const JSON_STORE_IN_PRODUCTION_ALLOWED = process.env.ALLOW_JSON_STORE_IN_PRODUCTION === "true";
 const rateLimitBuckets = new Map();
 
 const repository = createRepository({ seedStorePath: SEED_STORE_PATH, storePath: STORE_PATH });
@@ -33,8 +37,9 @@ function validateEnvironment() {
   const warnings = [];
   if (JWT_SECRET === "flowpilot-local-dev-secret") warnings.push("JWT_SECRET is using the development fallback");
   if (!process.env.TOKEN_ENCRYPTION_KEY) warnings.push("TOKEN_ENCRYPTION_KEY is falling back to JWT_SECRET");
-  if (!process.env.DATABASE_URL) warnings.push("DATABASE_URL is not set; using local JSON storage");
-  if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) warnings.push("Resend account-email delivery is not configured");
+  if (!process.env.DATABASE_URL && !JSON_STORE_IN_PRODUCTION_ALLOWED) warnings.push("DATABASE_URL is not set; using local JSON storage");
+  if (!process.env.DATABASE_URL && JSON_STORE_IN_PRODUCTION_ALLOWED) structuredLog("warn", "environment.warning", { warning: "ALLOW_JSON_STORE_IN_PRODUCTION is enabled; use this only for portfolio sandbox deployments" });
+  if (!REAL_EMAIL_SEND_DISABLED && (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL)) warnings.push("Resend account-email delivery is not configured");
   if (APP_ORIGIN.includes("localhost")) warnings.push("APP_ORIGIN still points to localhost");
   if (API_PUBLIC_URL.includes("localhost")) warnings.push("API_PUBLIC_URL still points to localhost");
   if (process.env.NODE_ENV === "production" && warnings.length) throw new Error(`Production environment invalid: ${warnings.join("; ")}`);
@@ -348,7 +353,7 @@ function encodeEmail({ to, subject, body }) {
 }
 
 async function sendGmailFollowUp(store, user, lead, draft) {
-  if (user.id === "usr_demo_founder" || !lead?.email) return { provider: "simulation" };
+  if (REAL_EMAIL_SEND_DISABLED || user.id === "usr_demo_founder" || !lead?.email) return { provider: "simulation" };
   const integration = store.integrations.find((item) => item.userId === user.id && item.provider === "gmail" && item.status === "connected" && item.encryptedCredentials);
   if (!integration) return { provider: "simulation" };
   const accessToken = await getIntegrationAccessToken(integration);
@@ -432,8 +437,9 @@ function systemStatus() {
   return {
     mode: process.env.NODE_ENV === "production" ? "production" : "development",
     services: {
+      publicSandbox: { enabled: PUBLIC_SANDBOX_ENABLED },
       ai: { provider: process.env.GROQ_API_KEY ? "groq" : "local", configured: Boolean(process.env.GROQ_API_KEY) },
-      billing: { provider: "razorpay", configured: Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET && process.env.RAZORPAY_PLAN_ID) },
+      billing: { provider: "razorpay", configured: !BILLING_DISABLED && Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET && process.env.RAZORPAY_PLAN_ID), disabled: BILLING_DISABLED },
       database: { provider: process.env.DATABASE_URL ? "supabase_postgres" : "local_json", configured: Boolean(process.env.DATABASE_URL) },
       leadWebhook: { configured: Boolean(process.env.LEAD_WEBHOOK_SECRET) },
       gmail: { configured: Boolean(process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET) },
@@ -537,8 +543,15 @@ async function route(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/demo/start") {
+    if (!PUBLIC_SANDBOX_ENABLED) return send(res, 404, { error: "public sandbox is disabled" });
     const user = await seedDemoWorkspace(store);
     return send(res, 200, { user: publicUser(user), token: signToken({ sub: user.id }), demo: true });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/sandbox/start") {
+    if (!PUBLIC_SANDBOX_ENABLED) return send(res, 404, { error: "public sandbox is disabled" });
+    const user = await seedDemoWorkspace(store);
+    return send(res, 200, { user: publicUser(user), token: signToken({ sub: user.id }), sandbox: true });
   }
 
   const leadWebhookMatch = url.pathname.match(/^\/api\/webhooks\/lead\/([^/]+)$/);
@@ -695,6 +708,12 @@ async function route(req, res) {
     return send(res, 200, { user: publicUser(demoUser), token: signToken({ sub: demoUser.id }), demo: true });
   }
 
+  if (req.method === "POST" && url.pathname === "/api/sandbox/reset") {
+    if (user.id !== "usr_demo_founder") return send(res, 403, { error: "sandbox reset is only available in the sandbox workspace" });
+    const sandboxUser = await seedDemoWorkspace(store);
+    return send(res, 200, { user: publicUser(sandboxUser), token: signToken({ sub: sandboxUser.id }), sandbox: true });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/onboarding/business") {
     const body = await parseBody(req);
     let business = getUserBusiness(store, user.id);
@@ -818,6 +837,7 @@ async function route(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/billing/subscription") {
+    if (BILLING_DISABLED) return send(res, 404, { error: "billing is disabled for this deployment" });
     if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET || !process.env.RAZORPAY_PLAN_ID) {
       return send(res, 503, { error: "Razorpay subscription keys and plan ID are not configured" });
     }

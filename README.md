@@ -54,7 +54,7 @@ node backend/test.js
 4. Copy `apps/web/.env.local.example` to `apps/web/.env.local`.
 5. Add your Supabase URL and publishable key.
 
-When `DATABASE_URL` is present, the backend uses the Supabase Postgres repository. Without it, local development and automated tests continue to use the ignored JSON runtime store. The recording demo seed works in both modes.
+When `DATABASE_URL` is present, the backend uses the Supabase Postgres repository. Without it, local development and automated tests continue to use the ignored JSON runtime store. The public sandbox seed works in both modes.
 
 ## Local MVP Demo
 
@@ -68,23 +68,41 @@ The Next.js workspace now supports a complete local demonstration:
 6. Approve the draft to simulate sending it.
 7. Confirm dashboard metrics, workflow runs, and activity logs update.
 
-Gmail, WhatsApp, and HubSpot buttons remain demo connectors until their OAuth flows are configured. Groq AI and Razorpay subscriptions become live automatically when their environment variables are provided. Production rollout still requires the Supabase repository migration, provider OAuth applications, and deployment configuration.
+Gmail, WhatsApp, and HubSpot buttons use sandbox behavior until their OAuth flows are configured. Groq AI and Razorpay subscriptions become live automatically when their environment variables are provided and the disabling flags are turned off.
 
-## Recording Demo
+## Public Resume Sandbox
 
-For a clean product recording:
+For a resume or portfolio link, keep the public sandbox enabled. Visitors land in a safe seeded workspace without needing credentials, and setup/payment screens are hidden from the sandbox experience.
 
 1. Start the API with `npm run dev:api`.
 2. Start the web app with `npm run dev:web`.
-3. Open `http://localhost:3000/?demo=1` to load a fresh demo automatically.
-4. Alternatively, open `http://localhost:3000` and click **Launch recording demo**.
+3. Open `http://localhost:3000` to load the sandbox automatically.
+4. Alternatively, open `http://localhost:3000/?sandbox=1` or click **Try FlowPilot**.
 5. Show the dashboard metrics and recent activity.
 6. Open **Approvals**, edit Sarah Chen's AI-style draft, and click **Approve and send**.
 7. Return to **Dashboard** to show the pending approval count drop to zero.
 8. Open **Automations** to show the Lead Follow-up run count increase.
-9. Use **Reset demo** in the sidebar before recording another take.
+9. Use **Reset sandbox** in the sidebar before another walkthrough.
 
-The recording demo is deterministic local sample data. It does not call external providers or send a real email.
+The sandbox is deterministic sample data. It does not call paid providers or send real email when `DISABLE_REAL_EMAIL_SEND=true`.
+
+Portfolio deployment flags:
+
+```env
+PUBLIC_SANDBOX_ENABLED=true
+DISABLE_BILLING=true
+DISABLE_REAL_EMAIL_SEND=true
+NEXT_PUBLIC_PUBLIC_SANDBOX_ENABLED=true
+NEXT_PUBLIC_HIDE_PROVIDER_SETUP=true
+```
+
+For a public portfolio sandbox, the backend can run without Supabase only when you explicitly set:
+
+```env
+ALLOW_JSON_STORE_IN_PRODUCTION=true
+```
+
+Use that flag only for demo deployments with seeded data. For a durable production workspace, add Supabase `DATABASE_URL` and keep `ALLOW_JSON_STORE_IN_PRODUCTION=false`.
 
 ## India-First Free-Tier Stack
 
@@ -200,3 +218,54 @@ Set `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, and `WHATSAPP_OWNER_USER_ID`
 
 - Add WhatsApp outbound replies if you want approvals to answer on WhatsApp as well as Gmail.
 - Deploy the API and web app, then configure public webhook URLs.
+
+## Free Deployment Plan
+
+Recommended free/portfolio setup:
+
+- Frontend: Vercel Hobby, root directory `apps/web`
+- Backend API: Render/Railway/Fly-style Node web service running `npm start`
+- Database: optional for the portfolio sandbox; Supabase Free for durable production
+
+Vercel environment variables for `apps/web`:
+
+```env
+NEXT_PUBLIC_API_URL=https://your-api-domain.example
+NEXT_PUBLIC_PUBLIC_SANDBOX_ENABLED=true
+NEXT_PUBLIC_HIDE_PROVIDER_SETUP=true
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+```
+
+Backend environment variables for a free Node service:
+
+```env
+NODE_ENV=production
+APP_ORIGIN=https://your-vercel-domain.vercel.app
+API_PUBLIC_URL=https://your-api-domain.example
+PUBLIC_SANDBOX_ENABLED=true
+DISABLE_BILLING=true
+DISABLE_REAL_EMAIL_SEND=true
+ALLOW_JSON_STORE_IN_PRODUCTION=true
+DATABASE_URL=
+DIRECT_URL=
+JWT_SECRET=
+TOKEN_ENCRYPTION_KEY=
+LEAD_WEBHOOK_SECRET=
+GROQ_API_KEY=
+```
+
+Apply the Supabase migration before deploying the backend:
+
+```bash
+npm run migrate
+```
+
+Portfolio sandbox deployment order:
+
+1. Deploy the backend API first. The included `render.yaml` can create a Render web service.
+2. Set `APP_ORIGIN` on the backend to your final Vercel URL, for example `https://flowpilot-ai.vercel.app`.
+3. Set `API_PUBLIC_URL` on the backend to the backend service URL.
+4. Deploy the frontend from `apps/web` on Vercel.
+5. Set `NEXT_PUBLIC_API_URL` on Vercel to the backend service URL.
+6. Open the Vercel app. With `NEXT_PUBLIC_PUBLIC_SANDBOX_ENABLED=true`, visitors should land in the safe sandbox workspace automatically.

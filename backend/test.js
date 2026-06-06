@@ -170,6 +170,20 @@ async function request(path, options = {}) {
     assert.equal(resetDemo.response.status, 200);
     assert.ok(resetDemo.body.token);
 
+    const sandbox = await request("/api/sandbox/start", { method: "POST", body: "{}" });
+    assert.equal(sandbox.response.status, 200);
+    assert.ok(sandbox.body.token);
+    assert.equal(sandbox.body.sandbox, true);
+
+    const sandboxAuth = { Authorization: `Bearer ${sandbox.body.token}` };
+    const resetSandbox = await request("/api/sandbox/reset", { method: "POST", headers: sandboxAuth, body: "{}" });
+    assert.equal(resetSandbox.response.status, 200);
+    assert.ok(resetSandbox.body.token);
+    assert.equal(resetSandbox.body.sandbox, true);
+
+    const disabledBilling = await request("/api/billing/subscription", { method: "POST", headers: sandboxAuth, body: "{}" });
+    assert.equal(disabledBilling.response.status, 404);
+
     console.log("Backend smoke tests passed");
   } finally {
     server.kill();

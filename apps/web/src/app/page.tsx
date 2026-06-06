@@ -58,6 +58,8 @@ const navItems: Array<[Page, LucideIcon, string]> = [
 ];
 
 const emptyMetrics: Dashboard["metrics"] = { activeAutomations: 0, leadsProcessedToday: 0, pendingApprovals: 0, errors: 0, timeSavedMinutesThisWeek: 0, successRate: 100 };
+const PUBLIC_SANDBOX_ENABLED = process.env.NEXT_PUBLIC_PUBLIC_SANDBOX_ENABLED !== "false";
+const HIDE_PROVIDER_SETUP = process.env.NEXT_PUBLIC_HIDE_PROVIDER_SETUP === "true";
 
 export default function Home() {
   const [token, setToken] = useState("");
@@ -114,19 +116,19 @@ export default function Home() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const demo = params.get("demo");
+    const sandbox = params.get("sandbox") || params.get("demo");
     const verificationToken = params.get("verify-email");
     const passwordToken = params.get("reset-password");
-    if (demo === "1") {
-      api<{ token: string }>("/api/demo/start", { method: "POST", body: "{}" })
+    if (sandbox === "1" || (PUBLIC_SANDBOX_ENABLED && !window.localStorage.getItem("flowpilot_token") && !window.sessionStorage.getItem("flowpilot_skip_sandbox"))) {
+      api<{ token: string }>("/api/sandbox/start", { method: "POST", body: "{}" })
         .then((data) => {
           window.localStorage.setItem("flowpilot_token", data.token);
           setToken(data.token);
           setPage("dashboard");
-          setNotice("Demo workspace loaded. Start with the dashboard, then review the pending approval.");
+          setNotice("Sandbox workspace loaded. Explore the product with safe sample data.");
           window.history.replaceState({}, "", "/");
         })
-        .catch((err) => setError(err instanceof Error ? err.message : "Could not launch demo workspace"));
+        .catch((err) => setError(err instanceof Error ? err.message : "Could not launch sandbox workspace"));
       return;
     }
     if (verificationToken) {
@@ -217,17 +219,17 @@ export default function Home() {
     }
   }
 
-  async function launchDemo() {
+  async function launchSandbox() {
     setLoading(true);
     setError("");
     try {
-      const data = await api<{ token: string; user: User }>("/api/demo/start", { method: "POST", body: "{}" });
+      const data = await api<{ token: string; user: User }>("/api/sandbox/start", { method: "POST", body: "{}" });
       saveToken(data.token);
       setUser(data.user);
       setPage("dashboard");
-      setNotice("Demo workspace loaded. Start with the dashboard, then review the pending approval.");
+      setNotice("Sandbox workspace loaded. Explore the product with safe sample data.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not launch demo workspace");
+      setError(err instanceof Error ? err.message : "Could not launch sandbox workspace");
     } finally {
       setLoading(false);
     }
@@ -267,17 +269,17 @@ export default function Home() {
     await mutate(`/api/approvals/${approval.id}/${action}`, { method: "POST", body: JSON.stringify({ draft }) }, action === "approve" ? "Draft approved and follow-up marked as sent." : "Draft rejected for review.");
   }
 
-  async function resetDemo() {
+  async function resetSandbox() {
     setLoading(true);
     setError("");
     try {
-      const data = await request<{ token: string }>("/api/demo/reset", { method: "POST", body: "{}" });
+      const data = await request<{ token: string }>("/api/sandbox/reset", { method: "POST", body: "{}" });
       saveToken(data.token);
       setPage("dashboard");
-      setNotice("Demo workspace reset to the recording-ready state.");
+      setNotice("Sandbox workspace reset.");
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not reset demo workspace");
+      setError(err instanceof Error ? err.message : "Could not reset sandbox workspace");
     } finally {
       setLoading(false);
     }
@@ -325,10 +327,12 @@ export default function Home() {
     }
   }
 
-  if (!token) return <AuthScreen error={error} forgotPasswordSubmit={forgotPasswordSubmit} launchDemo={launchDemo} loading={loading} mode={authMode} notice={notice} resetPasswordSubmit={resetPasswordSubmit} resetPasswordToken={resetPasswordToken} setMode={setAuthMode} submit={authSubmit} />;
+  if (!token) return <AuthScreen error={error} forgotPasswordSubmit={forgotPasswordSubmit} launchSandbox={launchSandbox} loading={loading} mode={authMode} notice={notice} resetPasswordSubmit={resetPasswordSubmit} resetPasswordToken={resetPasswordToken} setMode={setAuthMode} submit={authSubmit} />;
   if (!business) return <BusinessSetup submit={businessSubmit} loading={loading} error={error} user={user} />;
 
   const metrics = dashboard?.metrics || emptyMetrics;
+  const isSandbox = user?.id === "usr_demo_founder";
+  const visibleNavItems = isSandbox && HIDE_PROVIDER_SETUP ? navItems.filter(([key]) => key !== "settings") : navItems;
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
@@ -344,7 +348,7 @@ export default function Home() {
       <div className="flex min-h-[calc(100vh-4rem)]">
         <aside className="w-56 shrink-0 border-r border-slate-200 bg-white p-3">
           <nav className="space-y-1">
-            {navItems.map(([key, Icon, label]) => (
+            {visibleNavItems.map(([key, Icon, label]) => (
               <button className={`nav-item ${page === key ? "nav-active" : ""}`} key={key} onClick={() => setPage(key)} type="button">
                 <Icon size={16} />{label}
               </button>
@@ -352,11 +356,12 @@ export default function Home() {
           </nav>
           <div className="mt-8 border-t border-slate-200 pt-4">
             <div className="rounded-md bg-blue-50 p-3 text-xs text-blue-900">
-              <div className="mb-1 font-bold">{user?.id === "usr_demo_founder" ? "Demo workspace" : "Free plan"}</div>
-              {user?.id === "usr_demo_founder" ? "Recording-ready sample data is active." : "Local MVP mode is active."}
+              <div className="mb-1 font-bold">{isSandbox ? "Sandbox workspace" : "Free plan"}</div>
+              {isSandbox ? "Safe sample data for visitors." : "Personal workspace is active."}
             </div>
-            <div className="mt-3 text-xs text-slate-500">AI drafts: {systemStatus?.services.ai.provider || "checking"}</div>
-            {user?.id === "usr_demo_founder" && <button className="secondary-button mt-3 w-full" disabled={loading} onClick={resetDemo} type="button"><RefreshCw size={14} />Reset demo</button>}
+            {!isSandbox && <div className="mt-3 text-xs text-slate-500">AI drafts: {systemStatus?.services.ai.provider || "checking"}</div>}
+            {isSandbox && <button className="secondary-button mt-3 w-full" disabled={loading} onClick={resetSandbox} type="button"><RefreshCw size={14} />Reset sandbox</button>}
+            {isSandbox && <button className="mt-3 w-full text-left text-xs font-semibold text-blue-600" onClick={() => { window.sessionStorage.setItem("flowpilot_skip_sandbox", "1"); logout(); }} type="button">Create your own workspace</button>}
           </div>
         </aside>
         <section className="min-w-0 flex-1 p-7">
@@ -376,7 +381,7 @@ export default function Home() {
           {page === "templates" && <TemplatesPage templates={templates} workflows={workflows} mutate={mutate} />}
           {page === "integrations" && <IntegrationsPage connect={connectIntegration} integrations={integrations} />}
           {page === "activity" && <ActivityPage rows={activity} />}
-          {page === "settings" && <SettingsPage business={business} submit={businessSubmit} loading={loading} startSubscriptionCheckout={startSubscriptionCheckout} systemStatus={systemStatus} />}
+          {page === "settings" && !isSandbox && <SettingsPage business={business} submit={businessSubmit} loading={loading} startSubscriptionCheckout={startSubscriptionCheckout} systemStatus={systemStatus} />}
         </section>
       </div>
     </main>
@@ -387,10 +392,10 @@ function Brand() {
   return <div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-lg bg-blue-600 text-white"><Bot size={19} /></div><div><div className="text-sm font-bold">FlowPilot AI</div><div className="text-xs text-slate-500">Operations workspace</div></div></div>;
 }
 
-function AuthScreen({ mode, setMode, submit, forgotPasswordSubmit, resetPasswordSubmit, resetPasswordToken, launchDemo, loading, notice, error }: { mode: AuthMode; setMode: (mode: AuthMode) => void; submit: (event: FormEvent<HTMLFormElement>) => void; forgotPasswordSubmit: (event: FormEvent<HTMLFormElement>) => void; resetPasswordSubmit: (event: FormEvent<HTMLFormElement>) => void; resetPasswordToken: string; launchDemo: () => void; loading: boolean; notice: string; error: string }) {
+function AuthScreen({ mode, setMode, submit, forgotPasswordSubmit, resetPasswordSubmit, resetPasswordToken, launchSandbox, loading, notice, error }: { mode: AuthMode; setMode: (mode: AuthMode) => void; submit: (event: FormEvent<HTMLFormElement>) => void; forgotPasswordSubmit: (event: FormEvent<HTMLFormElement>) => void; resetPasswordSubmit: (event: FormEvent<HTMLFormElement>) => void; resetPasswordToken: string; launchSandbox: () => void; loading: boolean; notice: string; error: string }) {
   if (resetPasswordToken) return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-md"><div className="mb-6"><Brand /></div><div className="panel p-6"><h1 className="text-xl font-bold">Choose a new password</h1><p className="mt-2 text-sm text-slate-500">Use at least eight characters.</p>{error && <Banner text={error} tone="error" />}<form className="mt-5 space-y-4" onSubmit={resetPasswordSubmit}><Field label="New password" name="password" placeholder="Minimum 8 characters" required type="password" /><button className="primary-button w-full" disabled={loading} type="submit">{loading ? "Updating..." : "Update password"}</button></form></div></div></main>;
   if (mode === "forgot") return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-md"><div className="mb-6"><Brand /></div><div className="panel p-6"><h1 className="text-xl font-bold">Reset your password</h1><p className="mt-2 text-sm text-slate-500">We will send a recovery link if the account exists.</p>{error && <Banner text={error} tone="error" />}<form className="mt-5 space-y-4" onSubmit={forgotPasswordSubmit}><Field label="Work email" name="email" placeholder="alex@company.com" required type="email" /><button className="primary-button w-full" disabled={loading} type="submit">{loading ? "Sending..." : "Send recovery link"}</button></form><button className="mt-4 w-full text-sm font-semibold text-blue-600" onClick={() => setMode("login")} type="button">Back to login</button></div></div></main>;
-  return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-md"><div className="mb-6"><Brand /></div><div className="panel p-6"><h1 className="text-xl font-bold">{mode === "signup" ? "Create your FlowPilot account" : "Welcome back"}</h1><p className="mt-2 text-sm text-slate-500">Start with a lead follow-up automation for your business.</p><button className="secondary-button mt-5 w-full border-blue-200 bg-blue-50 text-blue-700" disabled={loading} onClick={launchDemo} type="button"><Sparkles size={16} />Launch recording demo</button><div className="my-4 flex items-center gap-3 text-xs text-slate-400"><span className="h-px flex-1 bg-slate-200" />or create your own workspace<span className="h-px flex-1 bg-slate-200" /></div>{notice && <Banner text={notice} tone="success" />}{error && <Banner text={error} tone="error" />}<form className="space-y-4" onSubmit={submit}>{mode === "signup" && <Field label="Full name" name="name" placeholder="Alex Johnson" required />}<Field label="Work email" name="email" placeholder="alex@company.com" required type="email" /><Field label="Password" name="password" placeholder="Minimum 8 characters" required type="password" /><button className="primary-button w-full" disabled={loading} type="submit">{loading ? "Please wait..." : mode === "signup" ? "Create account" : "Log in"}</button></form>{mode === "login" && <button className="mt-4 w-full text-sm font-semibold text-blue-600" onClick={() => setMode("forgot")} type="button">Forgot password?</button>}<button className="mt-4 w-full text-sm font-semibold text-blue-600" onClick={() => setMode(mode === "signup" ? "login" : "signup")} type="button">{mode === "signup" ? "Already have an account? Log in" : "Need an account? Sign up"}</button></div></div></main>;
+  return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-md"><div className="mb-6"><Brand /></div><div className="panel p-6"><h1 className="text-xl font-bold">{mode === "signup" ? "Create your FlowPilot account" : "Welcome back"}</h1><p className="mt-2 text-sm text-slate-500">Start with a lead follow-up automation for your business.</p><button className="secondary-button mt-5 w-full border-blue-200 bg-blue-50 text-blue-700" disabled={loading} onClick={launchSandbox} type="button"><Sparkles size={16} />Try FlowPilot</button><div className="my-4 flex items-center gap-3 text-xs text-slate-400"><span className="h-px flex-1 bg-slate-200" />or create your own workspace<span className="h-px flex-1 bg-slate-200" /></div>{notice && <Banner text={notice} tone="success" />}{error && <Banner text={error} tone="error" />}<form className="space-y-4" onSubmit={submit}>{mode === "signup" && <Field label="Full name" name="name" placeholder="Alex Johnson" required />}<Field label="Work email" name="email" placeholder="alex@company.com" required type="email" /><Field label="Password" name="password" placeholder="Minimum 8 characters" required type="password" /><button className="primary-button w-full" disabled={loading} type="submit">{loading ? "Please wait..." : mode === "signup" ? "Create account" : "Log in"}</button></form>{mode === "login" && <button className="mt-4 w-full text-sm font-semibold text-blue-600" onClick={() => setMode("forgot")} type="button">Forgot password?</button>}<button className="mt-4 w-full text-sm font-semibold text-blue-600" onClick={() => { window.sessionStorage.setItem("flowpilot_skip_sandbox", "1"); setMode(mode === "signup" ? "login" : "signup"); }} type="button">{mode === "signup" ? "Already have an account? Log in" : "Need an account? Sign up"}</button></div></div></main>;
 }
 
 function BusinessSetup({ submit, loading, error, user }: { submit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; error: string; user: User | null }) {

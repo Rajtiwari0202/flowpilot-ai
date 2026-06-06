@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: flowpilot-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: PUBLIC_SANDBOX_ENABLED
+        value: true
+      - key: DISABLE_BILLING
+        value: true
+      - key: DISABLE_REAL_EMAIL_SEND
+        value: true
+      - key: ALLOW_JSON_STORE_IN_PRODUCTION
+        value: true
+      - key: APP_ORIGIN
+        sync: false
+      - key: API_PUBLIC_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: LEAD_WEBHOOK_SECRET
+        generateValue: true

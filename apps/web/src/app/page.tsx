@@ -119,7 +119,7 @@ export default function Home() {
     const sandbox = params.get("sandbox") || params.get("demo");
     const verificationToken = params.get("verify-email");
     const passwordToken = params.get("reset-password");
-    if (sandbox === "1" || (PUBLIC_SANDBOX_ENABLED && !window.localStorage.getItem("flowpilot_token") && !window.sessionStorage.getItem("flowpilot_skip_sandbox"))) {
+    if (sandbox === "1" && PUBLIC_SANDBOX_ENABLED) {
       api<{ token: string }>("/api/sandbox/start", { method: "POST", body: "{}" })
         .then((data) => {
           window.localStorage.setItem("flowpilot_token", data.token);
@@ -176,6 +176,7 @@ export default function Home() {
     const values = Object.fromEntries(new FormData(event.currentTarget));
     try {
       const data = await api<{ token: string; user: User }>(`/api/auth/${authMode}`, { method: "POST", body: JSON.stringify(values) });
+      window.sessionStorage.setItem("flowpilot_skip_sandbox", "1");
       saveToken(data.token);
       setUser(data.user);
       setNotice(authMode === "signup" ? "Account created. Add your business details." : "Welcome back.");
@@ -327,6 +328,20 @@ export default function Home() {
     }
   }
 
+  async function syncGmailInbox() {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await request<{ created: number }>("/api/integrations/gmail/sync", { method: "POST", body: "{}" });
+      setNotice(data.created ? `Found ${data.created} new lead${data.created === 1 ? "" : "s"} in Gmail.` : "Gmail inbox checked - no new leads found.");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not sync Gmail inbox");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (!token) return <AuthScreen error={error} forgotPasswordSubmit={forgotPasswordSubmit} launchSandbox={launchSandbox} loading={loading} mode={authMode} notice={notice} resetPasswordSubmit={resetPasswordSubmit} resetPasswordToken={resetPasswordToken} setMode={setAuthMode} submit={authSubmit} />;
   if (!business) return <BusinessSetup submit={businessSubmit} loading={loading} error={error} user={user} />;
 
@@ -379,7 +394,7 @@ export default function Home() {
           {page === "leads" && <LeadsPage leads={leads} submit={leadSubmit} loading={loading} />}
           {page === "approvals" && <ApprovalsPage approvals={approvals} resolve={resolveApproval} loading={loading} />}
           {page === "templates" && <TemplatesPage templates={templates} workflows={workflows} mutate={mutate} />}
-          {page === "integrations" && <IntegrationsPage connect={connectIntegration} integrations={integrations} />}
+          {page === "integrations" && <IntegrationsPage connect={connectIntegration} integrations={integrations} loading={loading} syncGmail={syncGmailInbox} />}
           {page === "activity" && <ActivityPage rows={activity} />}
           {page === "settings" && !isSandbox && <SettingsPage business={business} submit={businessSubmit} loading={loading} startSubscriptionCheckout={startSubscriptionCheckout} systemStatus={systemStatus} />}
         </section>
@@ -424,9 +439,9 @@ function TemplatesPage({ templates, workflows, mutate }: { templates: Template[]
   return <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{templates.map((template) => { const active = workflows.some((row) => row.templateId === template.id); return <article className="panel p-5" key={template.id}><div className="flex items-start justify-between"><div className="grid size-10 place-items-center rounded-md bg-blue-50 text-blue-700"><Workflow size={18} /></div>{template.recommended && <Badge text="recommended" />}</div><h2 className="mt-4 font-bold">{template.title}</h2><p className="mt-2 min-h-16 text-sm leading-6 text-slate-500">{template.description}</p><button className={active ? "secondary-button mt-4" : "primary-button mt-4"} disabled={active} onClick={() => mutate("/api/workflows/from-template", { method: "POST", body: JSON.stringify({ templateId: template.id }) }, `${template.title} activated.`)} type="button">{active ? <CheckCircle2 size={15} /> : <Plus size={15} />}{active ? "Active" : "Activate"}</button></article>; })}</div>;
 }
 
-function IntegrationsPage({ integrations, connect }: { integrations: Integration[]; connect: (provider: string, title: string) => Promise<void> }) {
+function IntegrationsPage({ integrations, connect, syncGmail, loading }: { integrations: Integration[]; connect: (provider: string, title: string) => Promise<void>; syncGmail: () => Promise<void>; loading: boolean }) {
   const providers = [["gmail", Mail, "Gmail", "Monitor and send lead follow-up emails"], ["whatsapp", MessageSquare, "WhatsApp Business", "Route customer messages to your team"], ["hubspot", PlugZap, "HubSpot CRM", "Sync leads and follow-up activity"]] as const;
-  return <div className="grid gap-4 lg:grid-cols-3">{providers.map(([provider, Icon, title, description]) => { const connected = integrations.some((row) => row.provider === provider && row.status === "connected"); return <article className="panel p-5" key={provider}><Icon className="text-blue-600" size={22} /><h2 className="mt-4 font-bold">{title}</h2><p className="mt-2 min-h-16 text-sm leading-6 text-slate-500">{description}</p><button className={connected ? "secondary-button mt-4" : "primary-button mt-4"} disabled={connected} onClick={() => connect(provider, title)} type="button">{connected ? <CheckCircle2 size={15} /> : <PlugZap size={15} />}{connected ? "Connected" : "Connect"}</button></article>; })}</div>;
+  return <div className="grid gap-4 lg:grid-cols-3">{providers.map(([provider, Icon, title, description]) => { const connected = integrations.some((row) => row.provider === provider && row.status === "connected"); return <article className="panel p-5" key={provider}><Icon className="text-blue-600" size={22} /><h2 className="mt-4 font-bold">{title}</h2><p className="mt-2 min-h-16 text-sm leading-6 text-slate-500">{description}</p><button className={connected ? "secondary-button mt-4" : "primary-button mt-4"} disabled={connected} onClick={() => connect(provider, title)} type="button">{connected ? <CheckCircle2 size={15} /> : <PlugZap size={15} />}{connected ? "Connected" : "Connect"}</button>{provider === "gmail" && connected && <button className="secondary-button mt-2 w-full" disabled={loading} onClick={syncGmail} type="button"><RefreshCw size={15} />{loading ? "Checking inbox..." : "Sync inbox now"}</button>}</article>; })}</div>;
 }
 
 function ActivityPage({ rows }: { rows: ActivityRow[] }) { return <ActivityCard rows={rows} />; }

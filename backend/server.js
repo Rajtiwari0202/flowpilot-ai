@@ -757,20 +757,88 @@ async function route(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/auth/signup") {
-    const body = await parseBody(req);
-    if (!body.email || !body.password || !body.name) return send(res, 400, { error: "name, email, and password are required" });
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) return send(res, 400, { error: "enter a valid email address" });
-    if (String(body.password).length < 8) return send(res, 400, { error: "password must be at least 8 characters" });
-    if (store.users.some((user) => user.email.toLowerCase() === body.email.toLowerCase())) return send(res, 409, { error: "email already exists" });
-    const user = { id: id("usr"), name: body.name, email: body.email.toLowerCase(), passwordHash: hashPassword(body.password), emailVerified: false, plan: "free", createdAt: now() };
-    store.users.push(user);
-    logActivity(store, { userId: user.id, type: "user.created", label: "Account created", source: "auth" });
-    const verificationToken = issueAccountToken(store, user, "verify_email", 60 * 24);
-    const email = queueAccountEmail(store, user, "verify_email", verificationToken);
-    await deliverAccountEmail(email);
-    await writeStore(store);
-    return send(res, 201, { user: publicUser(user), token: signToken({ sub: user.id }), ...developmentToken(verificationToken) });
+  const body = await parseBody(req);
+
+  if (!body.email || !body.password || !body.name) {
+    return send(res, 400, {
+      error: "name, email, and password are required"
+    });
   }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
+    return send(res, 400, {
+      error: "enter a valid email address"
+    });
+  }
+
+  if (String(body.password).length < 8) {
+    return send(res, 400, {
+      error: "password must be at least 8 characters"
+    });
+  }
+
+  if (
+    store.users.some(
+      (user) =>
+        user.email.toLowerCase() ===
+        body.email.toLowerCase()
+    )
+  ) {
+    return send(res, 409, {
+      error: "email already exists"
+    });
+  }
+
+  const user = {
+    id: id("usr"),
+    name: body.name,
+    email: body.email.toLowerCase(),
+    passwordHash: hashPassword(body.password),
+    emailVerified: false,
+    plan: "free",
+    createdAt: now()
+  };
+
+  store.users.push(user);
+
+  logActivity(store, {
+    userId: user.id,
+    type: "user.created",
+    label: "Account created",
+    source: "auth"
+  });
+
+  const verificationToken = issueAccountToken(
+    store,
+    user,
+    "verify_email",
+    60 * 24
+  );
+
+  const email = queueAccountEmail(
+    store,
+    user,
+    "verify_email",
+    verificationToken
+  );
+
+  try {
+    await deliverAccountEmail(email);
+  } catch (error) {
+    console.warn(
+      "Email delivery skipped:",
+      error.message
+    );
+  }
+
+  await writeStore(store);
+
+  return send(res, 201, {
+    user: publicUser(user),
+    token: signToken({ sub: user.id }),
+    ...developmentToken(verificationToken)
+  });
+}
 
   if (req.method === "POST" && url.pathname === "/api/auth/login") {
     const body = await parseBody(req);

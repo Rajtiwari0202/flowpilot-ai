@@ -190,6 +190,10 @@ async function request(path, options = {}) {
     const disabledBilling = await request("/api/billing/subscription", { method: "POST", headers: sandboxAuth, body: "{}" });
     assert.equal(disabledBilling.response.status, 404);
 
+    const gmailSyncNoIntegration = await request("/api/integrations/gmail/sync", { method: "POST", headers: sandboxAuth, body: "{}" });
+    assert.equal(gmailSyncNoIntegration.response.status, 400);
+    assert.match(gmailSyncNoIntegration.body.error, /not connected/i);
+
     console.log("Backend smoke tests passed");
   } finally {
     server.kill();

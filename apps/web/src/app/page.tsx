@@ -165,8 +165,17 @@ export default function Home() {
     window.localStorage.removeItem("flowpilot_token");
     setToken("");
     setUser(null);
+    setBusiness(null);
     setDashboard(null);
+    setWorkflows([]);
+    setLeads([]);
+    setApprovals([]);
+    setIntegrations([]);
+    setActivity([]);
+    setTemplates([]);
+    setSystemStatus(null);
     setNotice("");
+    setError("");
   }
 
   async function authSubmit(event: FormEvent<HTMLFormElement>) {
@@ -177,6 +186,15 @@ export default function Home() {
     try {
       const data = await api<{ token: string; user: User }>(`/api/auth/${authMode}`, { method: "POST", body: JSON.stringify(values) });
       window.sessionStorage.setItem("flowpilot_skip_sandbox", "1");
+      setBusiness(null);
+      setDashboard(null);
+      setWorkflows([]);
+      setLeads([]);
+      setApprovals([]);
+      setIntegrations([]);
+      setActivity([]);
+      setTemplates([]);
+      setSystemStatus(null);
       saveToken(data.token);
       setUser(data.user);
       setNotice(authMode === "signup" ? "Account created. Add your business details." : "Welcome back.");
@@ -225,6 +243,15 @@ export default function Home() {
     setError("");
     try {
       const data = await api<{ token: string; user: User }>("/api/sandbox/start", { method: "POST", body: "{}" });
+      setBusiness(null);
+      setDashboard(null);
+      setWorkflows([]);
+      setLeads([]);
+      setApprovals([]);
+      setIntegrations([]);
+      setActivity([]);
+      setTemplates([]);
+      setSystemStatus(null);
       saveToken(data.token);
       setUser(data.user);
       setPage("dashboard");
@@ -414,7 +441,7 @@ function AuthScreen({ mode, setMode, submit, forgotPasswordSubmit, resetPassword
 }
 
 function BusinessSetup({ submit, loading, error, user }: { submit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; error: string; user: User | null }) {
-  return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-xl"><div className="mb-6"><Brand /></div><div className="panel p-6"><p className="text-xs font-bold uppercase text-blue-600">Onboarding</p><h1 className="mt-1 text-xl font-bold">Set up your business</h1><p className="mt-2 text-sm text-slate-500">Hi {user?.name?.split(" ")[0] || "there"}, these details personalize your follow-up drafts.</p>{error && <Banner text={error} tone="error" />}<form className="mt-5 grid gap-4 sm:grid-cols-2" onSubmit={submit}><div className="sm:col-span-2"><Field label="Business name" name="name" placeholder="Nova Creative Studio" required /></div><Select label="Business type" name="type" options={["agency", "e-commerce", "service_business", "startup", "solo_founder", "other"]} /><Select label="Reply tone" name="tone" options={["professional", "friendly"]} /><button className="primary-button sm:col-span-2" disabled={loading} type="submit">{loading ? "Saving..." : "Save and open workspace"}</button></form></div></div></main>;
+  return <main className="grid min-h-screen place-items-center bg-slate-50 p-6"><div className="w-full max-w-xl"><div className="mb-6"><Brand /></div><div className="panel p-6"><p className="text-xs font-bold uppercase text-blue-600">Onboarding</p><h1 className="mt-1 text-xl font-bold">Set up your business</h1><p className="mt-2 text-sm text-slate-500">Hi {user?.name?.split(" ")[0] || "there"}, these details personalize your follow-up drafts.</p>{error && <Banner text={error} tone="error" />}<form className="mt-5 grid gap-4 sm:grid-cols-2" onSubmit={submit}><div className="sm:col-span-2"><Field label="Business name" name="name" placeholder="e.g. Raj Digital Agency" required /></div><Select label="Business type" name="type" options={["agency", "e-commerce", "service_business", "startup", "solo_founder", "other"]} /><Select label="Reply tone" name="tone" options={["professional", "friendly"]} /><button className="primary-button sm:col-span-2" disabled={loading} type="submit">{loading ? "Saving..." : "Save and open workspace"}</button></form></div></div></main>;
 }
 
 function DashboardPage({ metrics, workflows, activity, setPage }: { metrics: Dashboard["metrics"]; workflows: WorkflowRow[]; activity: ActivityRow[]; setPage: (page: Page) => void }) {

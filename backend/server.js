@@ -47,7 +47,12 @@ const {
   parseBody,
 } = require("./src/utils/helpers");
 
-const rateLimitBuckets = new Map();
+// Import JWT services
+const { signToken, verifyToken } = require("./src/services/jwt.service");
+
+// Import middlewares
+const { getAuthUser, enforceAuthGuards } = require("./src/middleware/auth.middleware");
+const { enforceRateLimit } = require("./src/middleware/rateLimit.middleware");
 
 const repository = createRepository({ seedStorePath: SEED_STORE_PATH, storePath: STORE_PATH });
 
@@ -57,53 +62,6 @@ async function readStore() {
 
 async function writeStore(store) {
   return repository.write(store);
-}
-
-function enforceRateLimit(req, res, url) {
-  const sensitive = /^\/api\/auth\/(login|signup|request-password-reset|reset-password|verify-email)$/.test(url.pathname);
-  const limit = sensitive ? Number(process.env.AUTH_RATE_LIMIT || 12) : Number(process.env.API_RATE_LIMIT || 180);
-  const windowMs = 60 * 1000;
-  const key = `${clientIp(req)}:${sensitive ? "auth" : "api"}`;
-  const current = rateLimitBuckets.get(key);
-  const bucket = !current || current.resetAt <= Date.now() ? { count: 0, resetAt: Date.now() + windowMs } : current;
-  bucket.count += 1;
-  rateLimitBuckets.set(key, bucket);
-  res.setHeader("RateLimit-Limit", String(limit));
-  res.setHeader("RateLimit-Remaining", String(Math.max(0, limit - bucket.count)));
-  res.setHeader("RateLimit-Reset", String(Math.ceil(bucket.resetAt / 1000)));
-  if (bucket.count <= limit) return false;
-  send(res, 429, { error: "too many requests; try again shortly" });
-  return true;
-}
-
-function signToken(payload) {
-  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify({ ...payload, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 })).toString("base64url");
-  const signature = crypto.createHmac("sha256", JWT_SECRET).update(`${header}.${body}`).digest("base64url");
-  return `${header}.${body}.${signature}`;
-}
-
-function verifyToken(token) {
-  const [header, body, signature] = String(token || "").split(".");
-  if (!header || !body || !signature) return null;
-  const expected = crypto.createHmac("sha256", JWT_SECRET).update(`${header}.${body}`).digest("base64url");
-  const providedBuffer = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
-  if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return null;
-  let payload;
-  try {
-    payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-  } catch {
-    return null;
-  }
-  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
-  return payload;
-}
-
-function getAuthUser(req, store) {
-  const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  const payload = verifyToken(token);
-  return payload ? store.users.find((user) => user.id === payload.sub) : null;
 }
 
 function publicUser(user) {
@@ -845,8 +803,7 @@ async function route(req, res) {
   }
 
   const user = getAuthUser(req, store);
-  if (url.pathname.startsWith("/api/") && !user) return send(res, 401, { error: "missing or invalid bearer token" });
-  if (process.env.NODE_ENV === "production" && user && !user.emailVerified && url.pathname !== "/api/me") return send(res, 403, { error: "verify your email before using the workspace" });
+  if (!enforceAuthGuards(req, res, user, url)) return;
 
   if (req.method === "GET" && url.pathname === "/api/me") return send(res, 200, { user: publicUser(user), business: getUserBusiness(store, user.id) });
 

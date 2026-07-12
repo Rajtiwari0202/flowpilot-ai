@@ -1,42 +1,7 @@
 const { decryptSecret, encryptSecret } = require("../utils/crypto");
 const { now } = require("../utils/helpers");
 const { REAL_EMAIL_SEND_DISABLED } = require("../config/env");
-
-function integrationConfig(provider) {
-  if (provider === "gmail") return { clientId: process.env.GMAIL_CLIENT_ID, clientSecret: process.env.GMAIL_CLIENT_SECRET };
-  if (provider === "hubspot") return { clientId: process.env.HUBSPOT_CLIENT_ID, clientSecret: process.env.HUBSPOT_CLIENT_SECRET };
-  return {};
-}
-
-async function getIntegrationAccessToken(integration) {
-  const tokens = decryptSecret(integration.encryptedCredentials);
-  if (!tokens?.access_token) return null;
-  const expiresAt = Number(tokens.obtainedAt || 0) + Number(tokens.expires_in || 0) * 1000;
-  if (!tokens.refresh_token || !tokens.expires_in || expiresAt > Date.now() + 60000) return tokens.access_token;
-  const config = integrationConfig(integration.provider);
-  const endpoint = integration.provider === "gmail" ? "https://oauth2.googleapis.com/token" : "https://api.hubapi.com/oauth/v3/token";
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      refresh_token: tokens.refresh_token,
-      grant_type: "refresh_token"
-    }),
-    signal: AbortSignal.timeout(12000)
-  });
-  const refreshed = await response.json();
-  if (!response.ok) throw new Error(`${integration.provider} token refresh failed`);
-  integration.encryptedCredentials = encryptSecret({
-    ...tokens,
-    ...refreshed,
-    refresh_token: refreshed.refresh_token || tokens.refresh_token,
-    obtainedAt: Date.now()
-  });
-  integration.updatedAt = now();
-  return refreshed.access_token;
-}
+const { integrationConfig, getIntegrationAccessToken } = require("./oauth.service");
 
 function encodeEmail({ to, subject, body }) {
   return Buffer.from(`To: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n${body}`).toString("base64url");

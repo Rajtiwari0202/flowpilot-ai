@@ -4,19 +4,49 @@ const path = require("path");
 const crypto = require("crypto");
 const { createRepository } = require("./repository");
 
-const PORT = Number(process.env.PORT || 8787);
-const ROOT = path.resolve(__dirname, "..");
-const SEED_STORE_PATH = path.join(__dirname, "data", "store.json");
-const STORE_PATH = process.env.STORE_PATH || path.join(__dirname, "data", "store.local.json");
-const JWT_SECRET = process.env.JWT_SECRET || "flowpilot-local-dev-secret";
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-const API_PUBLIC_URL = process.env.API_PUBLIC_URL || `http://localhost:${PORT}`;
-const APP_ORIGIN = process.env.APP_ORIGIN || "http://localhost:3000";
-const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES || 1024 * 1024);
-const PUBLIC_SANDBOX_ENABLED = process.env.PUBLIC_SANDBOX_ENABLED !== "false";
-const BILLING_DISABLED = process.env.DISABLE_BILLING !== "false";
-const REAL_EMAIL_SEND_DISABLED = process.env.DISABLE_REAL_EMAIL_SEND !== "false";
-const JSON_STORE_IN_PRODUCTION_ALLOWED = process.env.ALLOW_JSON_STORE_IN_PRODUCTION === "true";
+// Import configurations
+const {
+  PORT,
+  ROOT,
+  SEED_STORE_PATH,
+  STORE_PATH,
+  JWT_SECRET,
+  GROQ_MODEL,
+  API_PUBLIC_URL,
+  APP_ORIGIN,
+  MAX_BODY_BYTES,
+  PUBLIC_SANDBOX_ENABLED,
+  BILLING_DISABLED,
+  REAL_EMAIL_SEND_DISABLED,
+  JSON_STORE_IN_PRODUCTION_ALLOWED,
+  validateEnvironment,
+} = require("./src/config/env");
+
+// Import logger
+const { structuredLog } = require("./src/utils/logger");
+
+// Import crypto helpers
+const {
+  hashPassword,
+  verifyPassword,
+  encryptSecret,
+  decryptSecret,
+  signaturesMatch,
+  tokenHash,
+} = require("./src/utils/crypto");
+
+// Import general helpers
+const {
+  id,
+  now,
+  clientIp,
+  send,
+  redirect,
+  parseJson,
+  readRawBody,
+  parseBody,
+} = require("./src/utils/helpers");
+
 const rateLimitBuckets = new Map();
 
 const repository = createRepository({ seedStorePath: SEED_STORE_PATH, storePath: STORE_PATH });
@@ -27,27 +57,6 @@ async function readStore() {
 
 async function writeStore(store) {
   return repository.write(store);
-}
-
-function structuredLog(level, event, fields = {}) {
-  console.log(JSON.stringify({ level, event, time: now(), ...fields }));
-}
-
-function validateEnvironment() {
-  const warnings = [];
-  if (JWT_SECRET === "flowpilot-local-dev-secret") warnings.push("JWT_SECRET is using the development fallback");
-  if (!process.env.TOKEN_ENCRYPTION_KEY) warnings.push("TOKEN_ENCRYPTION_KEY is falling back to JWT_SECRET");
-  if (!process.env.DATABASE_URL && !JSON_STORE_IN_PRODUCTION_ALLOWED) warnings.push("DATABASE_URL is not set; using local JSON storage");
-  if (!process.env.DATABASE_URL && JSON_STORE_IN_PRODUCTION_ALLOWED) structuredLog("warn", "environment.warning", { warning: "ALLOW_JSON_STORE_IN_PRODUCTION is enabled; use this only for portfolio sandbox deployments" });
-  if (!REAL_EMAIL_SEND_DISABLED && (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL)) warnings.push("Resend account-email delivery is not configured");
-  if (APP_ORIGIN.includes("localhost")) warnings.push("APP_ORIGIN still points to localhost");
-  if (API_PUBLIC_URL.includes("localhost")) warnings.push("API_PUBLIC_URL still points to localhost");
-  if (process.env.NODE_ENV === "production" && warnings.length) throw new Error(`Production environment invalid: ${warnings.join("; ")}`);
-  for (const warning of warnings) structuredLog("warn", "environment.warning", { warning });
-}
-
-function clientIp(req) {
-  return String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown").split(",")[0].trim();
 }
 
 function enforceRateLimit(req, res, url) {
@@ -65,27 +74,6 @@ function enforceRateLimit(req, res, url) {
   if (bucket.count <= limit) return false;
   send(res, 429, { error: "too many requests; try again shortly" });
   return true;
-}
-
-function id(prefix) {
-  return `${prefix}_${crypto.randomBytes(8).toString("hex")}`;
-}
-
-function now() {
-  return new Date().toISOString();
-}
-
-function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `${salt}:${hash}`;
-}
-
-function verifyPassword(password, storedHash) {
-  const [salt, hash] = String(storedHash).split(":");
-  if (!salt || !hash) return false;
-  const stored = Buffer.from(hash, "hex");
-  const candidate = Buffer.from(hashPassword(password, salt).split(":")[1], "hex");
-  return stored.length === candidate.length && crypto.timingSafeEqual(stored, candidate);
 }
 
 function signToken(payload) {
@@ -110,60 +98,6 @@ function verifyToken(token) {
   }
   if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
   return payload;
-}
-
-function send(res, status, payload, headers = {}) {
-  const isJson = typeof payload !== "string" && !Buffer.isBuffer(payload);
-  res.writeHead(status, {
-    "Access-Control-Allow-Origin": APP_ORIGIN,
-    "Access-Control-Allow-Headers": "authorization, content-type",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-    "Content-Type": isJson ? "application/json; charset=utf-8" : headers["Content-Type"] || "text/plain; charset=utf-8",
-    "Cache-Control": "no-store",
-    "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'self'",
-    "Cross-Origin-Opener-Policy": "same-origin",
-    "Referrer-Policy": "no-referrer",
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
-    "X-Request-Id": res.requestId || "",
-    ...headers
-  });
-  res.end(isJson ? JSON.stringify(payload) : payload);
-}
-
-async function readRawBody(req) {
-  const chunks = [];
-  let size = 0;
-  let tooLarge = false;
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY_BYTES) tooLarge = true;
-    if (!tooLarge) chunks.push(chunk);
-  }
-  if (tooLarge) {
-    const error = new Error("request body is too large");
-    error.status = 413;
-    throw error;
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-function redirect(res, location) {
-  res.writeHead(302, { Location: location });
-  res.end();
-}
-
-function parseJson(raw) {
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-async function parseBody(req) {
-  return parseJson(await readRawBody(req));
 }
 
 function getAuthUser(req, store) {
@@ -217,9 +151,6 @@ function dashboardFor(store, user) {
   };
 }
 
-function tokenHash(token) {
-  return crypto.createHash("sha256").update(token).digest("hex");
-}
 
 function issueAccountToken(store, user, kind, ttlMinutes) {
   const token = crypto.randomBytes(32).toString("hex");
@@ -271,22 +202,6 @@ function developmentToken(token) {
   return process.env.NODE_ENV === "production" ? {} : { developmentToken: token };
 }
 
-function encryptSecret(value) {
-  const iv = crypto.randomBytes(12);
-  const key = crypto.createHash("sha256").update(process.env.TOKEN_ENCRYPTION_KEY || JWT_SECRET).digest();
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), "utf8"), cipher.final()]);
-  return `${iv.toString("hex")}:${cipher.getAuthTag().toString("hex")}:${encrypted.toString("hex")}`;
-}
-
-function decryptSecret(value) {
-  if (!value) return null;
-  const [iv, tag, encrypted] = String(value).split(":");
-  const key = crypto.createHash("sha256").update(process.env.TOKEN_ENCRYPTION_KEY || JWT_SECRET).digest();
-  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "hex"));
-  decipher.setAuthTag(Buffer.from(tag, "hex"));
-  return JSON.parse(Buffer.concat([decipher.update(Buffer.from(encrypted, "hex")), decipher.final()]).toString("utf8"));
-}
 
 function upsertIntegration(store, userId, provider, values = {}) {
   let integration = store.integrations.find((item) => item.userId === userId && item.provider === provider);
@@ -564,13 +479,6 @@ async function createLeadApproval(store, user, body) {
   return { lead, approval };
 }
 
-function signaturesMatch(raw, signature, secret) {
-  if (!raw || !signature || !secret) return false;
-  const expected = crypto.createHmac("sha256", secret).update(raw).digest("hex");
-  const received = Buffer.from(String(signature).replace(/^sha256=/, ""));
-  const candidate = Buffer.from(expected);
-  return received.length === candidate.length && crypto.timingSafeEqual(received, candidate);
-}
 
 async function seedDemoWorkspace(store) {
   const userId = "usr_demo_founder";

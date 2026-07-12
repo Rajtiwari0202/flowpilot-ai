@@ -696,6 +696,89 @@ async function route(req, res) {
     return send(res, 200, { ok: true });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/auth/google") {
+    const config = integrationConfig("gmail");
+    if (!config.clientId || !config.clientSecret) return send(res, 503, { error: "Google login is not configured on this server" });
+    const state = signToken({ sub: "google_login", provider: "google_login" });
+    const params = new URLSearchParams({
+      client_id: config.clientId,
+      redirect_uri: `${API_PUBLIC_URL}/api/auth/google/callback`,
+      response_type: "code",
+      access_type: "offline",
+      prompt: "consent",
+      scope: [
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.readonly",
+      ].join(" "),
+      state,
+    });
+    return redirect(res, `https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/auth/google/callback") {
+    const stateToken = verifyToken(url.searchParams.get("state"));
+    if (!stateToken || stateToken.provider !== "google_login") return redirect(res, `${APP_ORIGIN}/?google_error=invalid_state`);
+    const code = url.searchParams.get("code");
+    if (!code) return redirect(res, `${APP_ORIGIN}/?google_error=missing_code`);
+    try {
+      const config = integrationConfig("gmail");
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ code, client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: `${API_PUBLIC_URL}/api/auth/google/callback`, grant_type: "authorization_code" }),
+        signal: AbortSignal.timeout(12000),
+      });
+      const tokens = await tokenRes.json();
+      if (!tokenRes.ok) throw new Error(tokens.error_description || tokens.error || "Google token exchange failed");
+
+      const profileRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      const profile = await profileRes.json();
+      if (!profileRes.ok || !profile.email) throw new Error("Could not fetch Google profile");
+
+      const googleTokens = { ...tokens, obtainedAt: Date.now() };
+      let user = store.users.find((u) => u.email === profile.email.toLowerCase());
+      const isNewUser = !user;
+      if (!user) {
+        user = {
+          id: id("usr"),
+          name: profile.name || profile.email,
+          email: profile.email.toLowerCase(),
+          passwordHash: null,
+          emailVerified: true,
+          googleId: profile.id,
+          plan: "free",
+          createdAt: now(),
+        };
+        store.users.push(user);
+        logActivity(store, { userId: user.id, type: "user.created", label: "Account created via Google", source: "google_oauth" });
+      } else {
+        user.googleId = profile.id;
+        user.emailVerified = true;
+        if (!user.name && profile.name) user.name = profile.name;
+      }
+
+      upsertIntegration(store, user.id, "gmail", {
+        status: "connected",
+        encryptedCredentials: encryptSecret(googleTokens),
+        connectedEmail: profile.email.toLowerCase(),
+      });
+      logActivity(store, { userId: user.id, type: "integration.connected", label: `Gmail connected via Google login`, source: "google_oauth" });
+
+      await writeStore(store);
+      const flowpilotToken = signToken({ sub: user.id });
+      return redirect(res, `${APP_ORIGIN}/?google_token=${flowpilotToken}&new_user=${isNewUser}`);
+    } catch (error) {
+      console.error("Google OAuth callback:", error.message);
+      return redirect(res, `${APP_ORIGIN}/?google_error=${encodeURIComponent(error.message)}`);
+    }
+  }
+
+
   const oauthCallbackMatch = url.pathname.match(/^\/api\/oauth\/(gmail|hubspot)\/callback$/);
   if (req.method === "GET" && oauthCallbackMatch) {
     const provider = oauthCallbackMatch[1];

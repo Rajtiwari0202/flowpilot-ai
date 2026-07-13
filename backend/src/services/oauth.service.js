@@ -2,6 +2,29 @@ const crypto = require("crypto");
 const { APP_ORIGIN } = require("../config/env");
 const { decryptSecret, encryptSecret } = require("../utils/crypto");
 const { id, now } = require("../utils/helpers");
+const { structuredLog } = require("../utils/logger");
+
+const logger = {
+  info(fields) {
+    const { event, ...rest } = fields;
+    structuredLog("info", event || "log", rest);
+  }
+};
+
+if (!process.env.GOOGLE_CALLBACK_URL) {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("GOOGLE_CALLBACK_URL missing");
+  }
+  process.env.GOOGLE_CALLBACK_URL = `${APP_ORIGIN}/api/auth/google/callback`;
+} else if (process.env.NODE_ENV === "production" && !process.env.GOOGLE_CALLBACK_URL.startsWith("https://")) {
+  throw new Error("GOOGLE_CALLBACK_URL must start with https:// in production");
+}
+
+logger.info({
+  event: "oauth.startup.audit",
+  GOOGLE_CALLBACK_URL: process.env.GOOGLE_CALLBACK_URL,
+  NODE_ENV: process.env.NODE_ENV || "development"
+});
 
 const integrationConfig = {
   gmail: {
@@ -79,9 +102,10 @@ async function getGoogleAuthUrl() {
     createdAt: now()
   });
 
+  const redirectUri = process.env.GOOGLE_CALLBACK_URL;
   const params = new URLSearchParams({
     client_id: config.clientId,
-    redirect_uri: oauthRedirectUri("gmail"),
+    redirect_uri: redirectUri,
     response_type: "code",
     scope: config.scopes.join(" "),
     state,
@@ -90,19 +114,28 @@ async function getGoogleAuthUrl() {
     code_challenge: challenge,
     code_challenge_method: "S256"
   });
+  const googleUrl = `${config.authUrl}?${params.toString()}`;
 
-  return `${config.authUrl}?${params.toString()}`;
+  logger.info({
+    event: "oauth.final_google_url",
+    redirectUri,
+    googleUrl
+  });
+
+  return googleUrl;
 }
 
-async function exchangeOauthCode(provider, code, verifier = null) {
+async function exchangeOauthCode(provider, code, verifier = null, redirectUriOverride = null) {
   const config = integrationConfig[provider];
   if (!config) throw new Error(`unknown OAuth provider: ${provider}`);
+
+  const redirectUri = redirectUriOverride || oauthRedirectUri(provider);
 
   const payloadParams = {
     grant_type: "authorization_code",
     client_id: config.clientId,
     client_secret: config.clientSecret,
-    redirect_uri: oauthRedirectUri(provider),
+    redirect_uri: redirectUri,
     code
   };
 
@@ -273,7 +306,7 @@ async function fetchGoogleProfile(accessToken) {
 }
 
 async function processGoogleLogin(code, verifier = null) {
-  const tokens = await exchangeOauthCode("gmail", code, verifier);
+  const tokens = await exchangeOauthCode("gmail", code, verifier, process.env.GOOGLE_CALLBACK_URL);
   const profile = await fetchGoogleProfile(tokens.access_token);
   const { repository } = require("../app");
 

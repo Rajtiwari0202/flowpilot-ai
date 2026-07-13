@@ -216,6 +216,25 @@ async function runSecurityTests() {
     const calculatedChallenge = crypto.createHash("sha256").update(statePayload.verifier).digest("base64url");
     assert.equal(calculatedChallenge, codeChallenge);
 
+    // ----------------------------------------------------
+    // 6. Google OAuth Redirect URI Validation
+    // ----------------------------------------------------
+    console.log("  6. Testing Google OAuth Redirect URI validation...");
+    const prevCallbackUrl = process.env.GOOGLE_CALLBACK_URL;
+    process.env.GOOGLE_CALLBACK_URL = "https://flowpilot-ai-pyp5.onrender.com/api/auth/google/callback";
+
+    const { getGoogleAuthUrl } = require("./src/services/oauth.service");
+    const googleAuthUrl = await getGoogleAuthUrl();
+    assert.ok(googleAuthUrl);
+    assert.ok(
+      googleAuthUrl.includes(
+        encodeURIComponent("https://flowpilot-ai-pyp5.onrender.com/api/auth/google/callback")
+      ),
+      "Google Auth redirect_uri does not contain the expected GOOGLE_CALLBACK_URL!"
+    );
+
+    process.env.GOOGLE_CALLBACK_URL = prevCallbackUrl;
+
     console.log("✅ Zero-Trust Security Validation Test Suite Passed!");
   } finally {
     fs.rmSync(testStorePath, { force: true });

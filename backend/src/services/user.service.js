@@ -110,7 +110,18 @@ async function createLeadApproval(user, body) {
     gmailMessageId: body.gmailMessageId || null,
     createdAt: now()
   };
-  await repository.leads.create(lead);
+  try {
+    await repository.leads.create(lead);
+  } catch (err) {
+    if (err.code === "23505" || err.message.includes("unique") || err.message.includes("duplicate")) {
+      const existing = await repository.leads.getByGmailMessageId(user.id, lead.gmailMessageId);
+      if (existing) {
+        const approval = await repository.approvals.getByLeadId(existing.id);
+        return { lead: existing, approval };
+      }
+    }
+    throw err;
+  }
 
   const business = await repository.businesses.getByUserId(user.id);
   const generated = await draftFollowUp({ leadName: lead.name, businessName: business?.name, tone: business?.tone, message: lead.message });

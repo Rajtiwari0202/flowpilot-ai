@@ -14,7 +14,8 @@
     "build:web": "npm run build --workspace apps/web",
     "lint:web": "npm run lint --workspace apps/web",
     "test": "node backend/test.js",
-    "migrate": "node --env-file-if-exists=.env backend/migrate.js"
+    "migrate": "node --env-file-if-exists=.env backend/migrate.js",
+    "worker": "node --env-file-if-exists=.env backend/worker.js"
   },
   "engines": {
     "node": ">=20"

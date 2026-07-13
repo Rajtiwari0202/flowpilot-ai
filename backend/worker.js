@@ -75,11 +75,57 @@ async function recoverQueuedEmails() {
   }
 }
 
+// Scheduled outbox crash recovery poller (every 5 minutes)
+const OUTBOX_RECOVERY_INTERVAL = 5 * 60 * 1000;
+const LEAD_RECOVERY_INTERVAL = 10 * 60 * 1000;
+
+async function recoverQueuedEmails() {
+  try {
+    const outbox = await repository.outbox.list();
+    const queuedItems = outbox.filter(item => item.status === "queued");
+    if (queuedItems.length === 0) return;
+
+    structuredLog("info", "worker.outbox_recovery.started", { count: queuedItems.length });
+    const { deliverAccountEmail } = require("./src/services/auth.service");
+    
+    for (const item of queuedItems) {
+      try {
+        await deliverAccountEmail(item);
+        structuredLog("info", "worker.outbox_recovery.delivered", { mailId: item.id });
+      } catch (err) {
+        structuredLog("error", "worker.outbox_recovery.failed", { mailId: item.id, error: err.message });
+      }
+    }
+  } catch (err) {
+    structuredLog("error", "worker.outbox_recovery.error", { error: err.message });
+  }
+}
+
+async function recoverStaleLeads() {
+  try {
+    const users = await repository.users.list();
+    for (const u of users) {
+      const leads = await repository.leads.listByUserId(u.id);
+      const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000);
+      const staleLeads = leads.filter(l => l.status === "new" && new Date(l.createdAt) < tenMinsAgo);
+      
+      for (const lead of staleLeads) {
+        structuredLog("info", "worker.lead_recovery.requeuing", { userId: u.id, leadId: lead.id });
+        await enqueueLeadProcessing(u.id, lead.id);
+      }
+    }
+  } catch (err) {
+    structuredLog("error", "worker.lead_recovery.error", { error: err.message });
+  }
+}
+
 // Start polling
 pollGmailAccounts();
 recoverQueuedEmails();
+recoverStaleLeads();
 const pollTimer = setInterval(pollGmailAccounts, POLL_INTERVAL);
 const recoveryTimer = setInterval(recoverQueuedEmails, OUTBOX_RECOVERY_INTERVAL);
+const leadRecoveryTimer = setInterval(recoverStaleLeads, LEAD_RECOVERY_INTERVAL);
 
 // Graceful exit handlers
 let shuttingDown = false;
@@ -89,6 +135,7 @@ async function gracefulShutdown() {
   structuredLog("info", "worker.shutting_down", { message: "Gracefully stopping background daemon..." });
   clearInterval(pollTimer);
   clearInterval(recoveryTimer);
+  clearInterval(leadRecoveryTimer);
 
   // Close BullMQ workers
   const workers = [gmailWorker, leadWorker, reminderWorker].filter(Boolean);

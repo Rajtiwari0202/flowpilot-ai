@@ -254,6 +254,9 @@ function createLocalRepository({ seedStorePath, storePath }) {
         const store = await readJson(storePath, seedStorePath);
         return mapIntegration(store.integrations?.find(i => (i.userId || i.user_id) === userId && i.provider === provider));
       },
+      async getByUserIdAndProviderForUpdate(userId, provider) {
+        return this.getByUserIdAndProvider(userId, provider);
+      },
       async listConnectedGmail() {
         const store = await readJson(storePath, seedStorePath);
         return (store.integrations || []).filter(i => i.provider === "gmail" && i.status === "connected" && (i.encryptedCredentials || i.encrypted_credentials)).map(mapIntegration);
@@ -350,7 +353,18 @@ function createLocalRepository({ seedStorePath, storePath }) {
         return mapLead(store.leads?.find(l => l.id === id));
       },
       async create(lead) {
-        await perform("leads", (coll) => coll.push(lead));
+        await perform("leads", (coll) => {
+          if (lead.gmailMessageId || lead.gmail_message_id) {
+            const msgId = lead.gmailMessageId || lead.gmail_message_id;
+            const exists = coll.some(item => (item.gmailMessageId || item.gmail_message_id) === msgId);
+            if (exists) {
+              const err = new Error("duplicate key value violates unique constraint on gmail_message_id");
+              err.code = "23505";
+              throw err;
+          }
+          }
+          coll.push(lead);
+        });
         return lead;
       },
       async update(id, updates) {
@@ -379,7 +393,15 @@ function createLocalRepository({ seedStorePath, storePath }) {
         return mapApproval(store.approvals?.find(a => (a.leadId || a.lead_id) === leadId));
       },
       async create(approval) {
-        await perform("approvals", (coll) => coll.push(approval));
+        await perform("approvals", (coll) => {
+          const exists = coll.some(item => (item.leadId || item.lead_id) === (approval.leadId || approval.lead_id));
+          if (exists) {
+            const err = new Error("duplicate key value violates unique constraint on lead_id");
+            err.code = "23505";
+            throw err;
+          }
+          coll.push(approval);
+        });
         return approval;
       },
       async update(id, updates) {
@@ -424,10 +446,20 @@ function createLocalRepository({ seedStorePath, storePath }) {
           if (idx !== -1) coll.splice(idx, 1);
         });
       },
+      async deleteByUserIdAndKind(userId, kind) {
+        return perform("authTokens", (coll) => {
+          for (let i = coll.length - 1; i >= 0; i--) {
+            const t = coll[i];
+            if ((t.userId || t.user_id) === userId && t.kind === kind) {
+              coll.splice(i, 1);
+            }
+          }
+        });
+      },
       async consumeOauthState(token, kind) {
         return runLocked(async () => {
           const store = await readJson(storePath, seedStorePath);
-          const idx = store.authTokens?.findIndex(t => t.kind === kind && (t.token === token || t.tokenHash === token || t.token_hash === token) && new Date(t.expiresAt || t.expires_at) > new Date()) ?? -1;
+          const idx = store.authTokens?.findIndex(t => t.kind === kind && (t.token === token || t.tokenHash === token || t.token_hash === token || String(t.tokenHash || t.token_hash || "").startsWith(token + ":")) && new Date(t.expiresAt || t.expires_at) > new Date()) ?? -1;
           if (idx === -1) return null;
           const match = store.authTokens[idx];
           store.authTokens.splice(idx, 1);
@@ -506,14 +538,22 @@ function createPostgresRepository({ databaseUrl, seedStorePath }) {
   let connectionVerified = false;
   async function ensureConnection() {
     if (connectionVerified) return;
-    try {
-      await sql`select 1 as connected`;
-      connectionVerified = true;
-      console.log("✅ PostgreSQL connection established");
-    } catch (error) {
-      console.error("❌ PostgreSQL connection failed:", error.message);
-      throw error;
+    let lastError;
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        await sql`select 1 as connected`;
+        connectionVerified = true;
+        console.log("✅ PostgreSQL connection established");
+        return;
+      } catch (error) {
+        lastError = error;
+        console.error(`❌ PostgreSQL connection attempt ${attempt} failed:`, error.message);
+        if (attempt < 5) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        }
+      }
     }
+    throw lastError;
   }
 
   return {
@@ -611,6 +651,11 @@ function createPostgresRepository({ databaseUrl, seedStorePath }) {
         const rows = await sql`SELECT * FROM public.integrations WHERE user_id = ${userId} AND provider = ${provider}`;
         return rows.length ? mapIntegration(rows[0]) : null;
       },
+      async getByUserIdAndProviderForUpdate(userId, provider) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.integrations WHERE user_id = ${userId} AND provider = ${provider} FOR UPDATE`;
+        return rows.length ? mapIntegration(rows[0]) : null;
+      },
       async listConnectedGmail() {
         await ensureConnection();
         const rows = await sql`SELECT * FROM public.integrations WHERE provider = 'gmail' AND status = 'connected' AND encrypted_credentials IS NOT NULL`;
@@ -635,33 +680,27 @@ function createPostgresRepository({ databaseUrl, seedStorePath }) {
       },
       async upsert(userId, provider, values) {
         await ensureConnection();
-        const existing = await this.getByUserIdAndProvider(userId, provider);
-        if (existing) {
-          const mapped = {
-            status: values.status !== undefined ? values.status : existing.status,
-            encrypted_credentials: values.encryptedCredentials !== undefined ? values.encryptedCredentials : existing.encryptedCredentials,
-            connected_email: values.connectedEmail !== undefined ? values.connectedEmail : existing.connectedEmail,
-            updated_at: new Date().toISOString()
-          };
-          const rows = await sql`
-            UPDATE public.integrations SET ${sql(mapped)} WHERE id = ${existing.id} RETURNING *
-          `;
-          return mapIntegration(rows[0]);
-        } else {
-          const { id } = require("./src/utils/helpers");
-          const i = {
-            id: id("int"),
-            userId,
-            provider,
-            status: values.status || "connected",
-            encryptedCredentials: values.encryptedCredentials || null,
-            connectedEmail: values.connectedEmail || null,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-          await this.create(i);
-          return i;
-        }
+        const { id } = require("./src/utils/helpers");
+        const newId = id("int");
+        const status = values.status || "connected";
+        const encryptedCredentials = values.encryptedCredentials || null;
+        const connectedEmail = values.connectedEmail || null;
+        const nowStr = new Date().toISOString();
+
+        const rows = await sql`
+          INSERT INTO public.integrations (
+            id, user_id, provider, status, encrypted_credentials, connected_email, created_at, updated_at
+          ) VALUES (
+            ${newId}, ${userId}, ${provider}, ${status}, ${encryptedCredentials}, ${connectedEmail}, ${nowStr}, ${nowStr}
+          )
+          ON CONFLICT (user_id, provider) DO UPDATE SET
+            status = COALESCE(${values.status}, public.integrations.status),
+            encrypted_credentials = CASE WHEN ${values.encryptedCredentials} IS NOT NULL THEN ${values.encryptedCredentials} ELSE public.integrations.encrypted_credentials END,
+            connected_email = COALESCE(${values.connectedEmail}, public.integrations.connected_email),
+            updated_at = EXCLUDED.updated_at
+          RETURNING *
+        `;
+        return mapIntegration(rows[0]);
       },
       async updateLastSyncedAt(userId, timestamp) {
         await ensureConnection();
@@ -878,11 +917,15 @@ function createPostgresRepository({ databaseUrl, seedStorePath }) {
         await ensureConnection();
         await sql`DELETE FROM public.auth_tokens WHERE id = ${id}`;
       },
+      async deleteByUserIdAndKind(userId, kind) {
+        await ensureConnection();
+        await sql`DELETE FROM public.auth_tokens WHERE user_id = ${userId} AND kind = ${kind}`;
+      },
       async consumeOauthState(token, kind) {
         await ensureConnection();
         const rows = await sql`
           DELETE FROM public.auth_tokens
-          WHERE kind = ${kind} AND token_hash = ${token} AND expires_at > NOW()
+          WHERE kind = ${kind} AND (token_hash = ${token} OR token_hash LIKE ${token + ":%"}) AND expires_at > NOW()
           RETURNING *
         `;
         return rows.length ? mapAuthToken(rows[0]) : null;

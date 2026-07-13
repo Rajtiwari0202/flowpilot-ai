@@ -3,7 +3,7 @@ const { clientIp, send } = require("../utils/helpers");
 const rateLimitBuckets = new Map();
 
 function enforceRateLimit(req, res, url) {
-  const sensitive = /^\/api\/auth\/(login|signup|request-password-reset|reset-password|verify-email)$/.test(url.pathname);
+  const sensitive = /^\/api\/(auth\/(login|signup|request-password-reset|reset-password|verify-email)|oauth\/[^/]+\/callback)$/.test(url.pathname);
   const limit = sensitive ? Number(process.env.AUTH_RATE_LIMIT || 12) : Number(process.env.API_RATE_LIMIT || 180);
   const windowMs = 60 * 1000;
   const key = `${clientIp(req)}:${sensitive ? "auth" : "api"}`;

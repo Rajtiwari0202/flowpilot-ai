@@ -384,11 +384,11 @@ async function razorpayWebhook(req, res, store, { readRawBody }) {
 
 async function integrationCallback(req, res, store, provider, { APP_ORIGIN }) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const state = verifyOauthState(url.searchParams.get("state"), provider, store);
+  const state = await verifyOauthState(url.searchParams.get("state"), provider);
   if (!state) return send(res, 401, { error: "invalid OAuth state" });
   try {
     const { repository } = require("../app");
-    const tokens = await exchangeOauthCode(provider, url.searchParams.get("code"));
+    const tokens = await exchangeOauthCode(provider, url.searchParams.get("code"), state.verifier);
     const integration = await repository.integrations.upsert(state.sub, provider, {
       status: "connected",
       encryptedCredentials: encryptSecret(tokens, state.sub)

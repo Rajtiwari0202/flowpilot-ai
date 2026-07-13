@@ -17,7 +17,7 @@ services:
       - key: DISABLE_REAL_EMAIL_SEND
         value: true
       - key: ALLOW_JSON_STORE_IN_PRODUCTION
-        value: true
+        value: false
       - key: APP_ORIGIN
         sync: false
       - key: API_PUBLIC_URL
@@ -28,3 +28,29 @@ services:
         generateValue: true
       - key: LEAD_WEBHOOK_SECRET
         generateValue: true
+      - key: REDIS_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+
+  - type: worker
+    name: flowpilot-worker
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run worker
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: PUBLIC_SANDBOX_ENABLED
+        value: true
+      - key: DISABLE_REAL_EMAIL_SEND
+        value: true
+      - key: ALLOW_JSON_STORE_IN_PRODUCTION
+        value: false
+      - key: REDIS_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false

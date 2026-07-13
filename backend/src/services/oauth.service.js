@@ -34,12 +34,14 @@ async function oauthAuthorizationUrl(userId, provider) {
 
   const { repository } = require("../app");
   const state = crypto.randomBytes(16).toString("hex");
+  const verifier = crypto.randomBytes(32).toString("base64url");
+  const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
 
   await repository.authTokens.create({
     id: id("tok"),
     userId,
     kind: `${provider}_oauth_state`,
-    tokenHash: state,
+    tokenHash: `${state}:${verifier}`,
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     createdAt: now()
   });
@@ -51,7 +53,9 @@ async function oauthAuthorizationUrl(userId, provider) {
     scope: config.scopes.join(" "),
     state,
     access_type: "offline",
-    prompt: "consent"
+    prompt: "consent",
+    code_challenge: challenge,
+    code_challenge_method: "S256"
   });
 
   return `${config.authUrl}?${params.toString()}`;
@@ -63,12 +67,14 @@ async function getGoogleAuthUrl() {
 
   const { repository } = require("../app");
   const state = crypto.randomBytes(16).toString("hex");
+  const verifier = crypto.randomBytes(32).toString("base64url");
+  const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
 
   await repository.authTokens.create({
     id: id("tok"),
     userId: "anonymous",
     kind: "google_login_oauth_state",
-    tokenHash: state,
+    tokenHash: `${state}:${verifier}`,
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     createdAt: now()
   });
@@ -80,23 +86,31 @@ async function getGoogleAuthUrl() {
     scope: config.scopes.join(" "),
     state,
     access_type: "offline",
-    prompt: "consent"
+    prompt: "consent",
+    code_challenge: challenge,
+    code_challenge_method: "S256"
   });
 
   return `${config.authUrl}?${params.toString()}`;
 }
 
-async function exchangeOauthCode(provider, code) {
+async function exchangeOauthCode(provider, code, verifier = null) {
   const config = integrationConfig[provider];
   if (!config) throw new Error(`unknown OAuth provider: ${provider}`);
 
-  const body = new URLSearchParams({
+  const payloadParams = {
     grant_type: "authorization_code",
     client_id: config.clientId,
     client_secret: config.clientSecret,
     redirect_uri: oauthRedirectUri(provider),
     code
-  });
+  };
+
+  if (verifier) {
+    payloadParams.code_verifier = verifier;
+  }
+
+  const body = new URLSearchParams(payloadParams);
 
   const response = await fetch(config.tokenUrl, {
     method: "POST",
@@ -116,19 +130,97 @@ async function exchangeOauthCode(provider, code) {
   };
 }
 
+async function acquireRedisLock(key, ttlMs = 15000) {
+  try {
+    const { getRedisConnection } = require("./queue.service");
+    const redis = getRedisConnection();
+    if (!redis) return null;
+
+    const token = crypto.randomBytes(16).toString("hex");
+    const res = await redis.set(key, token, "PX", ttlMs, "NX");
+    if (res === "OK") {
+      return token;
+    }
+  } catch (err) {
+    console.error("acquireRedisLock failed:", err.message);
+  }
+  return null;
+}
+
+async function releaseRedisLock(key, token) {
+  try {
+    const { getRedisConnection } = require("./queue.service");
+    const redis = getRedisConnection();
+    if (!redis || !token) return;
+
+    const luaScript = `
+      if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+      else
+        return 0
+      end
+    `;
+    await redis.eval(luaScript, 1, key, token);
+  } catch (err) {
+    console.error("releaseRedisLock failed:", err.message);
+  }
+}
+
+const activeRefreshes = new Map();
+
 async function getIntegrationAccessToken(integration) {
-  const tokens = decryptSecret(integration.encryptedCredentials, integration.userId);
-  if (!tokens) return null;
+  const key = `${integration.userId}:${integration.provider}`;
+  const lockKey = `lock:refresh:${key}`;
 
-  const config = integrationConfig[integration.provider];
-  if (!config) return null;
+  let lockToken = null;
+  let useFallback = false;
 
-  const secondsSinceObtained = (Date.now() - new Date(tokens.obtained_at).getTime()) / 1000;
-  if (secondsSinceObtained < tokens.expires_in - 60) return tokens.access_token;
+  const start = Date.now();
+  while (!lockToken && !useFallback) {
+    lockToken = await acquireRedisLock(lockKey, 15000);
+    if (lockToken) break;
 
-  if (!tokens.refresh_token) return null;
+    const { getRedisConnection } = require("./queue.service");
+    if (!getRedisConnection()) {
+      useFallback = true;
+      break;
+    }
+
+    if (Date.now() - start > 12000) {
+      throw new Error("Distributed lock acquisition timeout");
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  let resolveLock;
+  if (useFallback) {
+    const lockPromise = new Promise(resolve => { resolveLock = resolve; });
+    while (activeRefreshes.has(key)) {
+      await activeRefreshes.get(key);
+    }
+    activeRefreshes.set(key, lockPromise);
+  }
 
   try {
+    const { repository } = require("../app");
+    
+    const lockedIntegration = await repository.integrations.getByUserIdAndProviderForUpdate(
+      integration.userId,
+      integration.provider
+    );
+    if (!lockedIntegration) return null;
+
+    const tokens = decryptSecret(lockedIntegration.encryptedCredentials, lockedIntegration.userId);
+    if (!tokens) return null;
+
+    const config = integrationConfig[lockedIntegration.provider];
+    if (!config) return null;
+
+    const secondsSinceObtained = (Date.now() - new Date(tokens.obtained_at).getTime()) / 1000;
+    if (secondsSinceObtained < tokens.expires_in - 60) return tokens.access_token;
+
+    if (!tokens.refresh_token) return null;
+
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       client_id: config.clientId,
@@ -153,15 +245,21 @@ async function getIntegrationAccessToken(integration) {
       obtained_at: now()
     };
 
-    const { repository } = require("../app");
-    await repository.integrations.upsert(integration.userId, integration.provider, {
-      encryptedCredentials: encryptSecret(refreshedTokens, integration.userId)
+    await repository.integrations.upsert(lockedIntegration.userId, lockedIntegration.provider, {
+      encryptedCredentials: encryptSecret(refreshedTokens, lockedIntegration.userId)
     });
 
     return data.access_token;
   } catch (error) {
     console.error(`Token refresh failed for ${integration.provider}:`, error.message);
     return null;
+  } finally {
+    if (useFallback) {
+      activeRefreshes.delete(key);
+      if (resolveLock) resolveLock();
+    } else if (lockToken) {
+      await releaseRedisLock(lockKey, lockToken);
+    }
   }
 }
 
@@ -174,8 +272,8 @@ async function fetchGoogleProfile(accessToken) {
   return response.json();
 }
 
-async function processGoogleLogin(code) {
-  const tokens = await exchangeOauthCode("gmail", code);
+async function processGoogleLogin(code, verifier = null) {
+  const tokens = await exchangeOauthCode("gmail", code, verifier);
   const profile = await fetchGoogleProfile(tokens.access_token);
   const { repository } = require("../app");
 
@@ -223,11 +321,17 @@ async function processGoogleLogin(code) {
 async function verifyOauthState(stateParam, expectedProvider) {
   if (!stateParam) return null;
   const { repository } = require("../app");
-  
-  const token = await repository.authTokens.consumeOauthState(stateParam);
-  if (!token) return null;
 
-  return { sub: token.userId };
+  const kind = expectedProvider === "google_login"
+    ? "google_login_oauth_state"
+    : `${expectedProvider}_oauth_state`;
+
+  const tokenRecord = await repository.authTokens.consumeOauthState(stateParam, kind);
+  if (!tokenRecord) return null;
+
+  const [state, verifier] = tokenRecord.tokenHash.split(":");
+
+  return { sub: tokenRecord.userId, verifier: verifier || null };
 }
 
 async function syncHubspotLead(store, user, lead) {

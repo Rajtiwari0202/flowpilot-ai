@@ -8,12 +8,12 @@ const {
   seedDemoWorkspace,
 } = require("../services/auth.service");
 const { getGoogleAuthUrl, processGoogleLogin, verifyOauthState } = require("../services/oauth.service");
-const { hashPassword, verifyPassword } = require("../utils/crypto");
+const { hashPassword, verifyPassword, tokenHash } = require("../utils/crypto");
 const { signToken } = require("../services/jwt.service");
 const { publicUser } = require("../services/user.service");
 const { send, redirect, parseBody } = require("../utils/helpers");
 
-async function signup(req, res, store, { writeStore, logActivity }) {
+async function signup(req, res, store, { writeStore, logActivity } = {}) {
   const body = await parseBody(req);
 
   if (!body.email || !body.password || !body.name) {
@@ -80,7 +80,7 @@ async function signup(req, res, store, { writeStore, logActivity }) {
     id: `ref_${crypto.randomBytes(8).toString("hex")}`,
     userId: user.id,
     kind: "refresh_token",
-    tokenHash: refreshTokenVal,
+    tokenHash: tokenHash(refreshTokenVal),
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     createdAt: new Date().toISOString()
   });
@@ -97,7 +97,7 @@ async function signup(req, res, store, { writeStore, logActivity }) {
   });
 }
 
-async function login(req, res, store, { writeStore }) {
+async function login(req, res, store, { writeStore } = {}) {
   const body = await parseBody(req);
   const { repository } = require("../app");
   const user = await repository.users.getByEmail(body.email);
@@ -110,7 +110,7 @@ async function login(req, res, store, { writeStore }) {
     id: `ref_${crypto.randomBytes(8).toString("hex")}`,
     userId: user.id,
     kind: "refresh_token",
-    tokenHash: refreshTokenVal,
+    tokenHash: tokenHash(refreshTokenVal),
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     createdAt: new Date().toISOString()
   });
@@ -147,7 +147,7 @@ async function verifyEmail(req, res, store, { writeStore }) {
   return send(res, 200, { message: "Email verified successfully." });
 }
 
-async function requestPasswordReset(req, res, store, { writeStore }) {
+async function requestPasswordReset(req, res, store, { writeStore } = {}) {
   const body = await parseBody(req);
   const { repository } = require("../app");
   const user = await repository.users.getByEmail(body.email);
@@ -158,7 +158,7 @@ async function requestPasswordReset(req, res, store, { writeStore }) {
   return send(res, 200, { message: "If the account exists, a password reset email has been queued.", ...developmentToken(token) });
 }
 
-async function resetPassword(req, res, store, { writeStore }) {
+async function resetPassword(req, res, store, { writeStore } = {}) {
   const body = await parseBody(req);
   if (String(body.password || "").length < 8) return send(res, 400, { error: "password must be at least 8 characters" });
   const user = await consumeAccountToken(body.token, "reset_password");
@@ -177,12 +177,12 @@ async function googleLogin(req, res, store, { writeStore }) {
 
 async function googleCallback(req, res, store, { logActivity, writeStore, APP_ORIGIN }) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const stateToken = verifyOauthState(url.searchParams.get("state"), "google_login", store);
+  const stateToken = await verifyOauthState(url.searchParams.get("state"), "google_login");
   if (!stateToken) return redirect(res, `${APP_ORIGIN}/?google_error=invalid_state`);
   const code = url.searchParams.get("code");
   if (!code) return redirect(res, `${APP_ORIGIN}/?google_error=missing_code`);
   try {
-    const { user, isNewUser } = await processGoogleLogin(code, store, { logActivity, writeStore });
+    const { user, isNewUser } = await processGoogleLogin(code, stateToken.verifier, store, { logActivity, writeStore });
     const flowpilotToken = signToken({ sub: user.id });
     return redirect(res, `${APP_ORIGIN}/?google_token=${flowpilotToken}&new_user=${isNewUser}`);
   } catch (error) {
@@ -215,22 +215,33 @@ async function sandboxReset(req, res, store, { writeStore, user }) {
   return send(res, 200, { user: publicUser(sandboxUser), token: signToken({ sub: sandboxUser.id }), sandbox: true });
 }
 
-async function refreshToken(req, res, store, { writeStore }) {
+async function refreshToken(req, res, store, { writeStore } = {}) {
   const body = await parseBody(req);
   const refToken = body.refreshToken;
   if (!refToken) return send(res, 400, { error: "refreshToken is required" });
 
   const { repository } = require("../app");
-  const tokenRecord = await repository.authTokens.getByKindAndHash("refresh_token", refToken);
+  const tokenRecord = await repository.authTokens.getByKindAndHash("refresh_token", tokenHash(refToken));
 
-  if (!tokenRecord || new Date(tokenRecord.expiresAt) < new Date()) {
+  if (!tokenRecord) {
+    return send(res, 401, { error: "invalid or expired refresh token" });
+  }
+
+  if (tokenRecord.usedAt) {
+    await repository.authTokens.deleteByUserIdAndKind(tokenRecord.userId, "refresh_token");
+    const { structuredLog } = require("../utils/logger");
+    structuredLog("warn", "security.refresh_token_reuse_detected", { userId: tokenRecord.userId });
+    return send(res, 401, { error: "compromised session: refresh token reuse detected" });
+  }
+
+  if (new Date(tokenRecord.expiresAt) < new Date()) {
     return send(res, 401, { error: "invalid or expired refresh token" });
   }
 
   const user = await repository.users.getById(tokenRecord.userId);
   if (!user) return send(res, 401, { error: "user not found" });
 
-  await repository.authTokens.delete(tokenRecord.id);
+  await repository.authTokens.update(tokenRecord.id, { usedAt: new Date().toISOString() });
 
   const newAccessToken = signToken({ sub: user.id }, 15 * 60);
   const newRefreshTokenVal = crypto.randomBytes(32).toString("hex");
@@ -238,7 +249,7 @@ async function refreshToken(req, res, store, { writeStore }) {
     id: `ref_${crypto.randomBytes(8).toString("hex")}`,
     userId: user.id,
     kind: "refresh_token",
-    tokenHash: newRefreshTokenVal,
+    tokenHash: tokenHash(newRefreshTokenVal),
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     createdAt: new Date().toISOString()
   });

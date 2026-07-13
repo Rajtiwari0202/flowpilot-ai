@@ -51,7 +51,16 @@ async function processLead(job) {
       resolvedAt: null
     };
 
-    await repository.approvals.create(approval);
+    try {
+      await repository.approvals.create(approval);
+    } catch (err) {
+      if (err.code === "23505" || err.message.includes("unique") || err.message.includes("duplicate")) {
+        structuredLog("info", "worker.lead_processing.skipped_duplicate_approval", { leadId });
+        const existing = await repository.approvals.getByLeadId(leadId);
+        return { approvalId: existing.id };
+      }
+      throw err;
+    }
 
     // Update lead status to trigger approval queue listing
     await repository.leads.update(leadId, { status: "pending_approval" });

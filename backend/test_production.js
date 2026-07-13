@@ -240,6 +240,79 @@ async function runTests() {
     const leadApprovals = approvals.filter(a => a.leadId === leadId);
     assert.equal(leadApprovals.length, 1);
 
+    // ----------------------------------------------------
+    // Test Area 8: Refresh Token Replay Protection and Revocation
+    // ----------------------------------------------------
+    console.log("  8. Testing refresh token rotation, replay detection, and revocation...");
+    const { tokenHash } = require("./src/utils/crypto");
+    const rawRefreshToken = crypto.randomBytes(32).toString("hex");
+    
+    const tokenRecord = {
+      id: `ref_${crypto.randomBytes(8).toString("hex")}`,
+      userId: testUserId,
+      kind: "refresh_token",
+      tokenHash: tokenHash(rawRefreshToken),
+      expiresAt: new Date(Date.now() + 50000).toISOString(),
+      createdAt: new Date().toISOString(),
+      usedAt: null
+    };
+    await repository.authTokens.create(tokenRecord);
+
+    const { refreshToken: refreshTokenEndpoint } = require("./src/controllers/auth.controller");
+    
+    let resData;
+    const mockResObj1 = {
+      statusCode: 200,
+      headers: {},
+      writeHead(status, headers) {
+        this.statusCode = status;
+        this.headers = headers;
+      },
+      end(body) {
+        resData = JSON.parse(body);
+      }
+    };
+
+    await refreshTokenEndpoint({ body: { refreshToken: rawRefreshToken } }, mockResObj1);
+    assert.equal(mockResObj1.statusCode, 200);
+    assert.ok(resData.refreshToken);
+    const newRawRefreshToken = resData.refreshToken;
+
+    const originalTokenUpdated = await repository.authTokens.getByKindAndHash("refresh_token", tokenHash(rawRefreshToken));
+    assert.ok(originalTokenUpdated.usedAt);
+
+    const siblingToken = {
+      id: `ref_${crypto.randomBytes(8).toString("hex")}`,
+      userId: testUserId,
+      kind: "refresh_token",
+      tokenHash: tokenHash(crypto.randomBytes(32).toString("hex")),
+      expiresAt: new Date(Date.now() + 50000).toISOString(),
+      createdAt: new Date().toISOString(),
+      usedAt: null
+    };
+    await repository.authTokens.create(siblingToken);
+
+    let mockResObj2 = {
+      statusCode: 200,
+      headers: {},
+      writeHead(status, headers) {
+        this.statusCode = status;
+        this.headers = headers;
+      },
+      end(body) {
+        resData = JSON.parse(body);
+      }
+    };
+
+    await refreshTokenEndpoint({ body: { refreshToken: rawRefreshToken } }, mockResObj2);
+    assert.equal(mockResObj2.statusCode, 401);
+    assert.equal(resData.error, "compromised session: refresh token reuse detected");
+
+    const siblingTokenFetched = await repository.authTokens.getByKindAndHash("refresh_token", siblingToken.tokenHash);
+    assert.equal(siblingTokenFetched, null);
+    const rotatedTokenFetched = await repository.authTokens.getByKindAndHash("refresh_token", tokenHash(newRawRefreshToken));
+    assert.equal(rotatedTokenFetched, null);
+
     console.log("✅ Zero-Trust Production Audit Test Suite Completed Successfully!");
   } finally {
     fs.rmSync(testStorePath, { force: true });

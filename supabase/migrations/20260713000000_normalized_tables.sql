@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS public.leads (
 CREATE TABLE IF NOT EXISTS public.approvals (
   id TEXT PRIMARY KEY,
   user_id TEXT REFERENCES public.users(id) ON DELETE CASCADE,
-  lead_id TEXT REFERENCES public.leads(id) ON DELETE CASCADE,
+  lead_id TEXT REFERENCES public.leads(id) ON DELETE CASCADE UNIQUE,
   status TEXT NOT NULL DEFAULT 'pending',
   kind TEXT NOT NULL DEFAULT 'follow_up_draft',
   draft TEXT,
@@ -142,3 +142,6 @@ CREATE INDEX IF NOT EXISTS activity_logs_user_id_idx ON public.activity_logs(use
 CREATE INDEX IF NOT EXISTS auth_tokens_user_id_idx ON public.auth_tokens(user_id);
 CREATE INDEX IF NOT EXISTS auth_tokens_token_hash_idx ON public.auth_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS outbox_user_id_idx ON public.outbox(user_id);
+CREATE INDEX IF NOT EXISTS auth_tokens_kind_hash_idx ON public.auth_tokens(kind, token_hash);
+CREATE INDEX IF NOT EXISTS outbox_status_idx ON public.outbox(status);
+CREATE INDEX IF NOT EXISTS activity_logs_user_created_idx ON public.activity_logs(user_id, created_at DESC);

@@ -19,6 +19,62 @@ async function route(req, res, store, context) {
     send(res, 200, { ok: true, service: "flowpilot-api", time: now() });
     return true;
   }
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname === "/health/live") {
+    send(res, 200, { status: "ok", time: now() });
+    return true;
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname === "/health/ready") {
+    try {
+      const { repository } = require("../app");
+      const { getRedisConnection } = require("../services/queue.service");
+
+      if (repository.mode === "supabase_postgres") {
+        await repository.users.list();
+      }
+
+      const conn = getRedisConnection();
+      if (conn) {
+        await conn.ping();
+      }
+
+      send(res, 200, { status: "ready", database: "ok", redis: conn ? "ok" : "mock", time: now() });
+    } catch (err) {
+      send(res, 503, { status: "unready", error: err.message, time: now() });
+    }
+    return true;
+  }
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname === "/health/deep") {
+    try {
+      const { repository } = require("../app");
+      const { getRedisConnection } = require("../services/queue.service");
+
+      if (repository.mode === "supabase_postgres") {
+        await repository.users.list();
+      }
+
+      const conn = getRedisConnection();
+      if (conn) {
+        await conn.ping();
+      }
+
+      const externalApis = {
+        gmail: !!process.env.GMAIL_CLIENT_ID,
+        hubspot: !!process.env.HUBSPOT_CLIENT_ID,
+        resend: !!process.env.RESEND_API_KEY
+      };
+
+      send(res, 200, {
+        status: "healthy",
+        database: "ok",
+        redis: conn ? "ok" : "mock",
+        externalApis,
+        time: now()
+      });
+    } catch (err) {
+      send(res, 503, { status: "unhealthy", error: err.message, time: now() });
+    }
+    return true;
+  }
   if (req.method === "GET" && url.pathname === "/api/system/status") {
     send(res, 200, systemStatus());
     return true;

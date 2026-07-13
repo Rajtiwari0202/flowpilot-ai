@@ -26,6 +26,7 @@ function send(res, status, payload, headers = {}) {
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
     "X-Request-Id": res.requestId || "",
     ...headers
   });
@@ -33,7 +34,14 @@ function send(res, status, payload, headers = {}) {
 }
 
 function redirect(res, location) {
-  res.writeHead(302, { Location: location });
+  res.writeHead(302, { 
+    Location: location,
+    "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'; base-uri 'self'",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()"
+  });
   res.end();
 }
 
@@ -64,6 +72,7 @@ async function readRawBody(req) {
 }
 
 async function parseBody(req) {
+  if (req.body) return req.body;
   return parseJson(await readRawBody(req));
 }
 

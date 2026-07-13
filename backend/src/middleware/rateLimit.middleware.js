@@ -22,3 +22,14 @@ function enforceRateLimit(req, res, url) {
 module.exports = {
   enforceRateLimit,
 };
+
+// Periodic garbage collection for expired rate limit buckets (prevents memory leak)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateLimitBuckets.entries()) {
+    if (bucket.resetAt <= now) {
+      rateLimitBuckets.delete(key);
+    }
+  }
+}, 5 * 60 * 1000).unref();
+

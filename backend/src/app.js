@@ -2,17 +2,37 @@ const { createRepository } = require("../repository");
 const { SEED_STORE_PATH, STORE_PATH, PUBLIC_SANDBOX_ENABLED, BILLING_DISABLED, APP_ORIGIN } = require("./config/env");
 const { structuredLog } = require("./utils/logger");
 const { enforceRateLimit } = require("./middleware/rateLimit.middleware");
+const { enforceCsrfGuard } = require("./middleware/csrf.middleware");
 const { clientIp, id, send, readRawBody } = require("./utils/helpers");
 const mainRouter = require("./routes");
+
+// Register worker handlers for local/mock queues fallback
+require("./workers/gmailSync.worker");
+require("./workers/leadProcessing.worker");
+require("./workers/approvalReminder.worker");
 
 const repository = createRepository({ seedStorePath: SEED_STORE_PATH, storePath: STORE_PATH });
 
 async function readStore() {
-  return repository.read();
+  // Return stub store structure since production paths use repository
+  return {
+    users: [],
+    businesses: [],
+    integrations: [],
+    workflows: [],
+    leads: [],
+    approvals: [],
+    activity: [],
+    authTokens: [],
+    outbox: [],
+    historicalAnalytics: [],
+    processedWebhookEvents: []
+  };
 }
 
 async function writeStore(store) {
-  return repository.write(store);
+  // Stub write
+  return Promise.resolve();
 }
 
 async function handleRequest(req, res) {
@@ -33,8 +53,11 @@ async function handleRequest(req, res) {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     if (enforceRateLimit(req, res, url)) return;
 
+    let csrfPassed = false;
+    enforceCsrfGuard(req, res, () => { csrfPassed = true; });
+    if (!csrfPassed) return;
+
     const store = await readStore();
-    store.processedWebhookEvents ||= [];
 
     const { logActivity, createLeadApproval } = require("./services/user.service");
     const { sendGmailFollowUp } = require("./services/gmail.service");
@@ -55,6 +78,12 @@ async function handleRequest(req, res) {
       message: error.message,
       stack: process.env.NODE_ENV === "production" ? undefined : error.stack
     });
+    try {
+      const { captureException } = require("./services/observability.service");
+      captureException(error, { requestId: res.requestId });
+    } catch (obsErr) {
+      // Ignore
+    }
     send(res, error.status || 500, { error: error.status ? error.message : "internal server error" });
   }
 }

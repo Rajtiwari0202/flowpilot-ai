@@ -14,19 +14,21 @@ function verifyPassword(password, storedHash) {
   return stored.length === candidate.length && crypto.timingSafeEqual(stored, candidate);
 }
 
-function encryptSecret(value) {
+function encryptSecret(value, userSalt = "") {
   const iv = crypto.randomBytes(12);
-  const key = crypto.createHash("sha256").update(process.env.TOKEN_ENCRYPTION_KEY || JWT_SECRET).digest();
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const baseKey = process.env.TOKEN_ENCRYPTION_KEY || JWT_SECRET;
+  const derivedKey = crypto.createHmac("sha256", baseKey).update(userSalt).digest();
+  const cipher = crypto.createCipheriv("aes-256-gcm", derivedKey, iv);
   const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), "utf8"), cipher.final()]);
   return `${iv.toString("hex")}:${cipher.getAuthTag().toString("hex")}:${encrypted.toString("hex")}`;
 }
 
-function decryptSecret(value) {
+function decryptSecret(value, userSalt = "") {
   if (!value) return null;
   const [iv, tag, encrypted] = String(value).split(":");
-  const key = crypto.createHash("sha256").update(process.env.TOKEN_ENCRYPTION_KEY || JWT_SECRET).digest();
-  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "hex"));
+  const baseKey = process.env.TOKEN_ENCRYPTION_KEY || JWT_SECRET;
+  const derivedKey = crypto.createHmac("sha256", baseKey).update(userSalt).digest();
+  const decipher = crypto.createDecipheriv("aes-256-gcm", derivedKey, Buffer.from(iv, "hex"));
   decipher.setAuthTag(Buffer.from(tag, "hex"));
   return JSON.parse(Buffer.concat([decipher.update(Buffer.from(encrypted, "hex")), decipher.final()]).toString("utf8"));
 }

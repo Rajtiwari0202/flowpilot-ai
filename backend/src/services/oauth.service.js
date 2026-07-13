@@ -1,177 +1,240 @@
 const crypto = require("crypto");
-const { API_PUBLIC_URL } = require("../config/env");
-const { signToken, verifyToken } = require("./jwt.service");
+const { APP_ORIGIN } = require("../config/env");
 const { decryptSecret, encryptSecret } = require("../utils/crypto");
-const { now, id } = require("../utils/helpers");
+const { id, now } = require("../utils/helpers");
 
-function integrationConfig(provider) {
-  if (provider === "gmail") return { clientId: process.env.GMAIL_CLIENT_ID, clientSecret: process.env.GMAIL_CLIENT_SECRET };
-  if (provider === "hubspot") return { clientId: process.env.HUBSPOT_CLIENT_ID, clientSecret: process.env.HUBSPOT_CLIENT_SECRET };
-  return {};
-}
-
-function oauthRedirectUri(provider) {
-  return `${API_PUBLIC_URL}/api/oauth/${provider}/callback`;
-}
-
-function oauthAuthorizationUrl(provider, userId) {
-  const config = integrationConfig(provider);
-  if (!config.clientId || !config.clientSecret) return null;
-  const state = signToken({ sub: userId, provider });
-  if (provider === "gmail") {
-    const params = new URLSearchParams({ client_id: config.clientId, redirect_uri: oauthRedirectUri(provider), response_type: "code", access_type: "offline", prompt: "consent", scope: "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly", state });
-    return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
-  }
-  if (provider === "hubspot") {
-    const params = new URLSearchParams({ client_id: config.clientId, redirect_uri: oauthRedirectUri(provider), scope: "crm.objects.contacts.read crm.objects.contacts.write", state });
-    return `https://app.hubspot.com/oauth/authorize?${params}`;
-  }
-  return null;
-}
-
-function getGoogleAuthUrl() {
-  const config = integrationConfig("gmail");
-  if (!config.clientId || !config.clientSecret) return null;
-  const state = signToken({ sub: "google_login", provider: "google_login" });
-  const params = new URLSearchParams({
-    client_id: config.clientId,
-    redirect_uri: `${API_PUBLIC_URL}/api/auth/google/callback`,
-    response_type: "code",
-    access_type: "offline",
-    prompt: "consent",
-    scope: [
-      "https://www.googleapis.com/auth/userinfo.profile",
-      "https://www.googleapis.com/auth/userinfo.email",
+const integrationConfig = {
+  gmail: {
+    authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    clientId: process.env.GMAIL_CLIENT_ID,
+    clientSecret: process.env.GMAIL_CLIENT_SECRET,
+    scopes: [
       "https://www.googleapis.com/auth/gmail.send",
       "https://www.googleapis.com/auth/gmail.readonly",
-    ].join(" "),
-    state,
+      "https://www.googleapis.com/auth/userinfo.email"
+    ]
+  },
+  hubspot: {
+    authUrl: "https://app.hubspot.com/oauth/authorize",
+    tokenUrl: "https://api.hubapi.com/oauth/v1/token",
+    clientId: process.env.HUBSPOT_CLIENT_ID,
+    clientSecret: process.env.HUBSPOT_CLIENT_SECRET,
+    scopes: ["crm.objects.contacts.read", "crm.objects.contacts.write"]
+  }
+};
+
+function oauthRedirectUri(provider) {
+  return `${APP_ORIGIN}/api/oauth/${provider}/callback`;
+}
+
+async function oauthAuthorizationUrl(userId, provider) {
+  const config = integrationConfig[provider];
+  if (!config || !config.clientId) return null;
+
+  const { repository } = require("../app");
+  const state = crypto.randomBytes(16).toString("hex");
+
+  await repository.authTokens.create({
+    id: id("tok"),
+    userId,
+    kind: `${provider}_oauth_state`,
+    tokenHash: state,
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    createdAt: now()
   });
-  return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+
+  const params = new URLSearchParams({
+    client_id: config.clientId,
+    redirect_uri: oauthRedirectUri(provider),
+    response_type: "code",
+    scope: config.scopes.join(" "),
+    state,
+    access_type: "offline",
+    prompt: "consent"
+  });
+
+  return `${config.authUrl}?${params.toString()}`;
+}
+
+async function getGoogleAuthUrl() {
+  const config = integrationConfig.gmail;
+  if (!config || !config.clientId) return null;
+
+  const { repository } = require("../app");
+  const state = crypto.randomBytes(16).toString("hex");
+
+  await repository.authTokens.create({
+    id: id("tok"),
+    userId: "anonymous",
+    kind: "google_login_oauth_state",
+    tokenHash: state,
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    createdAt: now()
+  });
+
+  const params = new URLSearchParams({
+    client_id: config.clientId,
+    redirect_uri: oauthRedirectUri("gmail"),
+    response_type: "code",
+    scope: config.scopes.join(" "),
+    state,
+    access_type: "offline",
+    prompt: "consent"
+  });
+
+  return `${config.authUrl}?${params.toString()}`;
 }
 
 async function exchangeOauthCode(provider, code) {
-  const config = integrationConfig(provider);
-  const values = { code, client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: oauthRedirectUri(provider), grant_type: "authorization_code" };
-  const endpoint = provider === "gmail" ? "https://oauth2.googleapis.com/token" : "https://api.hubapi.com/oauth/v3/token";
-  const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(values), signal: AbortSignal.timeout(12000) });
-  const tokens = await response.json();
-  if (!response.ok) throw new Error(tokens.error_description || tokens.error || `${provider} OAuth exchange failed`);
-  return { ...tokens, obtainedAt: Date.now() };
+  const config = integrationConfig[provider];
+  if (!config) throw new Error(`unknown OAuth provider: ${provider}`);
+
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    redirect_uri: oauthRedirectUri(provider),
+    code
+  });
+
+  const response = await fetch(config.tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+    signal: AbortSignal.timeout(12000)
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error_description || data.error || "Token exchange failed");
+
+  return {
+    access_token: data.access_token,
+    refresh_token: data.refresh_token || null,
+    expires_in: data.expires_in,
+    obtained_at: now()
+  };
 }
 
 async function getIntegrationAccessToken(integration) {
-  const tokens = decryptSecret(integration.encryptedCredentials);
-  if (!tokens?.access_token) return null;
-  const expiresAt = Number(tokens.obtainedAt || 0) + Number(tokens.expires_in || 0) * 1000;
-  if (!tokens.refresh_token || !tokens.expires_in || expiresAt > Date.now() + 60000) return tokens.access_token;
-  const config = integrationConfig(integration.provider);
-  const endpoint = integration.provider === "gmail" ? "https://oauth2.googleapis.com/token" : "https://api.hubapi.com/oauth/v3/token";
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
+  const tokens = decryptSecret(integration.encryptedCredentials, integration.userId);
+  if (!tokens) return null;
+
+  const config = integrationConfig[integration.provider];
+  if (!config) return null;
+
+  const secondsSinceObtained = (Date.now() - new Date(tokens.obtained_at).getTime()) / 1000;
+  if (secondsSinceObtained < tokens.expires_in - 60) return tokens.access_token;
+
+  if (!tokens.refresh_token) return null;
+
+  try {
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
       client_id: config.clientId,
       client_secret: config.clientSecret,
-      refresh_token: tokens.refresh_token,
-      grant_type: "refresh_token"
-    }),
-    signal: AbortSignal.timeout(12000)
-  });
-  const refreshed = await response.json();
-  if (!response.ok) throw new Error(`${integration.provider} token refresh failed`);
-  integration.encryptedCredentials = encryptSecret({
-    ...tokens,
-    ...refreshed,
-    refresh_token: refreshed.refresh_token || tokens.refresh_token,
-    obtainedAt: Date.now()
-  });
-  integration.updatedAt = now();
-  return refreshed.access_token;
+      refresh_token: tokens.refresh_token
+    });
+
+    const response = await fetch(config.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+      signal: AbortSignal.timeout(12000)
+    });
+
+    const data = await response.json();
+    if (!response.ok) return null;
+
+    const refreshedTokens = {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token || tokens.refresh_token,
+      expires_in: data.expires_in,
+      obtained_at: now()
+    };
+
+    const { repository } = require("../app");
+    await repository.integrations.upsert(integration.userId, integration.provider, {
+      encryptedCredentials: encryptSecret(refreshedTokens, integration.userId)
+    });
+
+    return data.access_token;
+  } catch (error) {
+    console.error(`Token refresh failed for ${integration.provider}:`, error.message);
+    return null;
+  }
 }
 
 async function fetchGoogleProfile(accessToken) {
-  const profileRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+  const response = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
     headers: { Authorization: `Bearer ${accessToken}` },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(12000)
   });
-  const profile = await profileRes.json();
-  if (!profileRes.ok || !profile.email) throw new Error("Could not fetch Google profile");
-  return profile;
+  if (!response.ok) throw new Error(`Google profile fetch failed: ${response.status}`);
+  return response.json();
 }
 
-async function processGoogleLogin(code, store, { logActivity, writeStore }) {
-  const config = integrationConfig("gmail");
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code,
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      redirect_uri: `${API_PUBLIC_URL}/api/auth/google/callback`,
-      grant_type: "authorization_code"
-    }),
-    signal: AbortSignal.timeout(12000),
-  });
-  const tokens = await tokenRes.json();
-  if (!tokenRes.ok) throw new Error(tokens.error_description || tokens.error || "Google token exchange failed");
-
+async function processGoogleLogin(code) {
+  const tokens = await exchangeOauthCode("gmail", code);
   const profile = await fetchGoogleProfile(tokens.access_token);
+  const { repository } = require("../app");
 
-  const googleTokens = { ...tokens, obtainedAt: Date.now() };
-  let user = store.users.find((u) => u.email === profile.email.toLowerCase());
-  const isNewUser = !user;
+  let user = await repository.users.getByEmail(profile.email);
+  let isNewUser = false;
+
   if (!user) {
+    isNewUser = true;
     user = {
       id: id("usr"),
-      name: profile.name || profile.email,
+      name: profile.name || "Google User",
       email: profile.email.toLowerCase(),
       passwordHash: null,
       emailVerified: true,
-      googleId: profile.id,
       plan: "free",
-      createdAt: now(),
+      createdAt: now()
     };
-    store.users.push(user);
-    logActivity(store, { userId: user.id, type: "user.created", label: "Account created via Google", source: "google_oauth" });
-  } else {
-    user.googleId = profile.id;
-    user.emailVerified = true;
-    if (!user.name && profile.name) user.name = profile.name;
+    await repository.users.create(user);
+    await repository.activity.create({
+      userId: user.id,
+      type: "user.created",
+      label: "Account created via Google",
+      source: "google_oauth",
+      status: "success"
+    });
   }
 
-  upsertIntegration(store, user.id, "gmail", {
+  await repository.integrations.upsert(user.id, "gmail", {
     status: "connected",
-    encryptedCredentials: encryptSecret(googleTokens),
-    connectedEmail: profile.email.toLowerCase(),
+    encryptedCredentials: encryptSecret(tokens, user.id),
+    connectedEmail: profile.email
   });
-  logActivity(store, { userId: user.id, type: "integration.connected", label: `Gmail connected via Google login`, source: "google_oauth" });
 
-  await writeStore(store);
+  await repository.activity.create({
+    userId: user.id,
+    type: "integration.connected",
+    label: "Gmail connected via Google login",
+    source: "google_oauth",
+    status: "success"
+  });
+
   return { user, isNewUser };
 }
 
-function verifyOauthState(stateParam, expectedProvider) {
-  const stateToken = verifyToken(stateParam);
-  if (!stateToken || stateToken.provider !== expectedProvider) return null;
-  return stateToken;
-}
+async function verifyOauthState(stateParam, expectedProvider) {
+  if (!stateParam) return null;
+  const { repository } = require("../app");
+  
+  const token = await repository.authTokens.consumeOauthState(stateParam);
+  if (!token) return null;
 
-function upsertIntegration(store, userId, provider, values = {}) {
-  let integration = store.integrations.find((item) => item.userId === userId && item.provider === provider);
-  if (!integration) {
-    integration = { id: id("int"), userId, provider, createdAt: now() };
-    store.integrations.push(integration);
-  }
-  Object.assign(integration, values, { updatedAt: now() });
-  return integration;
+  return { sub: token.userId };
 }
 
 async function syncHubspotLead(store, user, lead) {
   if (user.id === "usr_demo_founder") return { provider: "simulation" };
-  const integration = store.integrations.find((item) => item.userId === user.id && item.provider === "hubspot" && item.status === "connected" && item.encryptedCredentials);
-  if (!integration) return { provider: "simulation" };
+  const { repository } = require("../app");
+  const integration = await repository.integrations.getByUserIdAndProvider(user.id, "hubspot");
+  if (!integration || integration.status !== "connected" || !integration.encryptedCredentials) return { provider: "simulation" };
   const accessToken = await getIntegrationAccessToken(integration);
   const response = await fetch("https://api.hubapi.com/crm/v3/objects/contacts", {
     method: "POST",
@@ -193,6 +256,5 @@ module.exports = {
   fetchGoogleProfile,
   processGoogleLogin,
   verifyOauthState,
-  upsertIntegration,
   syncHubspotLead,
 };

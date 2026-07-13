@@ -12,7 +12,7 @@ async function authRoutes(req, res, url, store, context) {
     return true;
   }
   if (req.method === "GET" && url.pathname === "/api/auth/google") {
-    await authController.googleLogin(req, res);
+    await authController.googleLogin(req, res, store, { writeStore });
     return true;
   }
   if (req.method === "GET" && url.pathname === "/api/auth/google/callback") {
@@ -40,7 +40,11 @@ async function authRoutes(req, res, url, store, context) {
     return true;
   }
   if (req.method === "POST" && url.pathname === "/api/auth/login") {
-    await authController.login(req, res, store);
+    await authController.login(req, res, store, { writeStore });
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/auth/refresh") {
+    await authController.refreshToken(req, res, store, { writeStore });
     return true;
   }
 
@@ -48,13 +52,13 @@ async function authRoutes(req, res, url, store, context) {
   const { getAuthUser, enforceAuthGuards } = require("../middleware/auth.middleware");
 
   if (req.method === "POST" && url.pathname === "/api/demo/reset") {
-    const user = getAuthUser(req, store);
+    const user = await getAuthUser(req, store);
     if (!enforceAuthGuards(req, res, user, url)) return true;
     await authController.demoReset(req, res, store, { writeStore, user });
     return true;
   }
   if (req.method === "POST" && url.pathname === "/api/sandbox/reset") {
-    const user = getAuthUser(req, store);
+    const user = await getAuthUser(req, store);
     if (!enforceAuthGuards(req, res, user, url)) return true;
     await authController.sandboxReset(req, res, store, { writeStore, user });
     return true;

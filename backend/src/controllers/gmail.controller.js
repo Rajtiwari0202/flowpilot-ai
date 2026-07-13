@@ -1,14 +1,20 @@
-const { syncGmailInbox } = require("../services/gmail.service");
 const { send } = require("../utils/helpers");
+const { enqueueGmailSync } = require("../services/queue.service");
 
-async function sync(req, res, store, user, { createLeadApproval, writeStore, logActivity }) {
+async function sync(req, res, store, user) {
   try {
-    const createdLeads = await syncGmailInbox(store, user, { createLeadApproval, writeStore });
-    if (createdLeads.length) {
-      logActivity(store, { userId: user.id, type: "integration.synced", label: `${createdLeads.length} new lead${createdLeads.length === 1 ? "" : "s"} found in Gmail inbox`, source: "gmail" });
-      await writeStore(store);
+    const { repository } = require("../app");
+    const integration = await repository.integrations.getByUserIdAndProvider(user.id, "gmail");
+    if (!integration || integration.status !== "connected" || !integration.encryptedCredentials) {
+      return send(res, 400, { error: "Gmail is not connected for this account" });
     }
-    return send(res, 200, { created: createdLeads.length, leads: createdLeads });
+
+    const job = await enqueueGmailSync(user.id);
+
+    return send(res, 200, { 
+      queued: true, 
+      jobId: job.id
+    });
   } catch (error) {
     console.error("Gmail inbox sync:", error.message);
     return send(res, error.status || 502, { error: error.message || "Gmail inbox sync failed" });

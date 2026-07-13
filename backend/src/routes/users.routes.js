@@ -13,6 +13,7 @@ async function usersRoutes(req, res, url, store, context) {
     "/api/me",
     "/api/onboarding/business",
     "/api/dashboard",
+    "/api/dashboard/analytics",
     "/api/workflows",
     "/api/leads",
     "/api/approvals",
@@ -20,7 +21,9 @@ async function usersRoutes(req, res, url, store, context) {
     "/api/workflows/from-template",
     "/api/activity",
     "/api/ai/draft-follow-up",
-    "/api/billing/subscription"
+    "/api/billing/subscription",
+    "/api/billing/portal",
+    "/api/billing/cancel"
   ];
   const workflowMatch = req.method === "PATCH" && url.pathname.match(/^\/api\/workflows\/([^/]+)$/);
   const approvalMatch = req.method === "POST" && url.pathname.match(/^\/api\/approvals\/([^/]+)\/(approve|reject)$/);
@@ -29,7 +32,7 @@ async function usersRoutes(req, res, url, store, context) {
   if (!isUserRoute) return false;
 
   // Enforce auth
-  const user = getAuthUser(req, store);
+  const user = await getAuthUser(req, store);
   if (!enforceAuthGuards(req, res, user, url)) return true;
 
   if (req.method === "GET" && url.pathname === "/api/me") {
@@ -42,6 +45,10 @@ async function usersRoutes(req, res, url, store, context) {
   }
   if (req.method === "GET" && url.pathname === "/api/dashboard") {
     await userController.getDashboard(req, res, store, user);
+    return true;
+  }
+  if (req.method === "GET" && url.pathname === "/api/dashboard/analytics") {
+    await userController.getDashboardAnalytics(req, res, store, user);
     return true;
   }
   if (req.method === "GET" && url.pathname === "/api/workflows") {
@@ -86,6 +93,14 @@ async function usersRoutes(req, res, url, store, context) {
   }
   if (req.method === "POST" && url.pathname === "/api/billing/subscription") {
     await userController.createBillingSubscription(req, res, store, user, { writeStore, BILLING_DISABLED });
+    return true;
+  }
+  if (req.method === "GET" && url.pathname === "/api/billing/portal") {
+    await userController.getBillingPortal(req, res, store, user, { BILLING_DISABLED });
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/billing/cancel") {
+    await userController.cancelBillingSubscription(req, res, store, user, { writeStore, BILLING_DISABLED });
     return true;
   }
 

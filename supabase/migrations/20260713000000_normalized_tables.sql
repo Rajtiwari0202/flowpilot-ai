@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS public.leads (
   message TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT 'manual',
   status TEXT NOT NULL DEFAULT 'new',
+  gmail_message_id TEXT UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

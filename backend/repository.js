@@ -1,211 +1,489 @@
 const fs = require("fs");
 
-const COLLECTIONS = [
-  "users",
-  "businesses",
-  "integrations",
-  "templates",
-  "workflows",
-  "leads",
-  "activity",
-  "approvals",
-  "processedWebhookEvents",
-  "authTokens",
-  "outbox",
-  "historicalAnalytics"
-];
-
-function emptyStore() {
-  return Object.fromEntries(
-    COLLECTIONS.map((collection) => [collection, []])
-  );
+let writeLock = Promise.resolve();
+async function runLocked(fn) {
+  const result = writeLock.then(fn);
+  writeLock = result.catch(() => {});
+  return result;
 }
 
-function normalizeStore(store) {
-  const normalized = emptyStore();
-
-  for (const collection of COLLECTIONS) {
-    normalized[collection] = Array.isArray(store[collection])
-      ? store[collection]
-      : [];
+async function readJson(storePath, seedStorePath) {
+  if (!fs.existsSync(storePath)) {
+    fs.copyFileSync(seedStorePath, storePath);
   }
-
-  return normalized;
+  return JSON.parse(fs.readFileSync(storePath, "utf8"));
 }
 
-function createLocalRepository({ seedStorePath, storePath }) {
-  return {
-    mode: "local_json",
-
-    async read() {
-      if (!fs.existsSync(storePath)) {
-        fs.copyFileSync(seedStorePath, storePath);
-      }
-
-      return normalizeStore(
-        JSON.parse(fs.readFileSync(storePath, "utf8"))
-      );
-    },
-
-    async write(store) {
-      fs.writeFileSync(
-        storePath,
-        JSON.stringify(normalizeStore(store), null, 2)
-      );
-    },
-
-    async close() {}
-  };
+async function writeJson(storePath, store) {
+  fs.writeFileSync(storePath, JSON.stringify(store, null, 2));
 }
 
 // Mapping helper functions
 function mapUser(u) {
+  if (!u) return null;
   return {
     id: u.id,
     name: u.name,
     email: u.email,
-    passwordHash: u.password_hash,
-    emailVerified: u.email_verified,
-    googleId: u.google_id,
+    passwordHash: u.password_hash || u.passwordHash,
+    emailVerified: u.email_verified !== undefined ? u.email_verified : u.emailVerified,
+    googleId: u.google_id || u.googleId,
     plan: u.plan,
     billing: u.billing,
-    createdAt: u.created_at ? new Date(u.created_at).toISOString() : null,
-    emailVerifiedAt: u.email_verified_at ? new Date(u.email_verified_at).toISOString() : null,
-    passwordChangedAt: u.password_changed_at ? new Date(u.password_changed_at).toISOString() : null
+    createdAt: u.created_at ? new Date(u.created_at).toISOString() : (u.createdAt ? new Date(u.createdAt).toISOString() : null),
+    emailVerifiedAt: u.email_verified_at ? new Date(u.email_verified_at).toISOString() : (u.emailVerifiedAt ? new Date(u.emailVerifiedAt).toISOString() : null),
+    passwordChangedAt: u.password_changed_at ? new Date(u.password_changed_at).toISOString() : (u.passwordChangedAt ? new Date(u.passwordChangedAt).toISOString() : null)
   };
 }
 
 function mapBusiness(b) {
+  if (!b) return null;
   return {
     id: b.id,
-    userId: b.user_id,
+    userId: b.user_id || b.userId,
     name: b.name,
     type: b.type,
     tone: b.tone,
     goals: b.goals || [],
-    createdAt: b.created_at ? new Date(b.created_at).toISOString() : null,
-    updatedAt: b.updated_at ? new Date(b.updated_at).toISOString() : null
+    createdAt: b.created_at ? new Date(b.created_at).toISOString() : (b.createdAt ? new Date(b.createdAt).toISOString() : null),
+    updatedAt: b.updated_at ? new Date(b.updated_at).toISOString() : (b.updatedAt ? new Date(b.updatedAt).toISOString() : null)
   };
 }
 
 function mapIntegration(i) {
+  if (!i) return null;
   return {
     id: i.id,
-    userId: i.user_id,
+    userId: i.user_id || i.userId,
     provider: i.provider,
     status: i.status,
-    encryptedCredentials: i.encrypted_credentials,
-    connectedEmail: i.connected_email,
-    createdAt: i.created_at ? new Date(i.created_at).toISOString() : null,
-    updatedAt: i.updated_at ? new Date(i.updated_at).toISOString() : null
+    encryptedCredentials: i.encrypted_credentials || i.encryptedCredentials,
+    connectedEmail: i.connected_email || i.connectedEmail,
+    lastSyncedAt: i.last_synced_at ? new Date(i.last_synced_at).toISOString() : (i.lastSyncedAt ? new Date(i.lastSyncedAt).toISOString() : null),
+    createdAt: i.created_at ? new Date(i.created_at).toISOString() : (i.createdAt ? new Date(i.createdAt).toISOString() : null),
+    updatedAt: i.updated_at ? new Date(i.updated_at).toISOString() : (i.updatedAt ? new Date(i.updatedAt).toISOString() : null)
   };
 }
 
 function mapTemplate(t) {
+  if (!t) return null;
   return {
     id: t.id,
     title: t.title,
     description: t.description,
     category: t.category,
     recommended: t.recommended || false,
-    triggerKey: t.trigger_key,
+    triggerKey: t.trigger_key || t.triggerKey,
     actions: t.actions || []
   };
 }
 
 function mapWorkflow(w) {
+  if (!w) return null;
   return {
     id: w.id,
-    userId: w.user_id,
-    templateId: w.template_id,
+    userId: w.user_id || w.userId,
+    templateId: w.template_id || w.templateId,
     name: w.name,
     status: w.status,
-    triggerKey: w.trigger_key,
+    triggerKey: w.trigger_key || w.triggerKey,
     actions: w.actions || [],
     runs: w.runs || 0,
-    createdAt: w.created_at ? new Date(w.created_at).toISOString() : null,
-    updatedAt: w.updated_at ? new Date(w.updated_at).toISOString() : null
+    createdAt: w.created_at ? new Date(w.created_at).toISOString() : (w.createdAt ? new Date(w.createdAt).toISOString() : null),
+    updatedAt: w.updated_at ? new Date(w.updated_at).toISOString() : (w.updatedAt ? new Date(w.updatedAt).toISOString() : null)
   };
 }
 
 function mapLead(l) {
+  if (!l) return null;
   return {
     id: l.id,
-    userId: l.user_id,
+    userId: l.user_id || l.userId,
     name: l.name,
     email: l.email,
     phone: l.phone,
     message: l.message,
     source: l.source,
     status: l.status,
-    createdAt: l.created_at ? new Date(l.created_at).toISOString() : null
+    gmailMessageId: l.gmail_message_id || l.gmailMessageId || null,
+    createdAt: l.created_at ? new Date(l.created_at).toISOString() : (l.createdAt ? new Date(l.createdAt).toISOString() : null)
   };
 }
 
 function mapApproval(a) {
+  if (!a) return null;
   return {
     id: a.id,
-    userId: a.user_id,
-    leadId: a.lead_id,
+    userId: a.user_id || a.userId,
+    leadId: a.lead_id || a.leadId,
     status: a.status,
     kind: a.kind,
     draft: a.draft,
-    aiProvider: a.ai_provider,
-    deliveryProvider: a.delivery_provider,
-    createdAt: a.created_at ? new Date(a.created_at).toISOString() : null,
-    resolvedAt: a.resolved_at ? new Date(a.resolved_at).toISOString() : null
+    aiProvider: a.ai_provider || a.aiProvider,
+    deliveryProvider: a.delivery_provider || a.deliveryProvider,
+    createdAt: a.created_at ? new Date(a.created_at).toISOString() : (a.createdAt ? new Date(a.createdAt).toISOString() : null),
+    resolvedAt: a.resolved_at ? new Date(a.resolved_at).toISOString() : (a.resolvedAt ? new Date(a.resolvedAt).toISOString() : null)
   };
 }
 
 function mapActivity(ac) {
+  if (!ac) return null;
   return {
     id: ac.id,
-    userId: ac.user_id,
+    userId: ac.user_id || ac.userId,
     type: ac.type,
     label: ac.label,
     source: ac.source,
     status: ac.status,
-    createdAt: ac.created_at ? new Date(ac.created_at).toISOString() : null
+    createdAt: ac.created_at ? new Date(ac.created_at).toISOString() : (ac.createdAt ? new Date(ac.createdAt).toISOString() : null)
   };
 }
 
 function mapAuthToken(at) {
+  if (!at) return null;
   return {
     id: at.id,
-    userId: at.user_id,
+    userId: at.user_id || at.userId,
     kind: at.kind,
-    tokenHash: at.token_hash,
-    expiresAt: at.expires_at ? new Date(at.expires_at).toISOString() : null,
-    createdAt: at.created_at ? new Date(at.created_at).toISOString() : null,
-    usedAt: at.used_at ? new Date(at.used_at).toISOString() : null
+    tokenHash: at.token_hash || at.tokenHash || at.token,
+    token: at.token,
+    expiresAt: at.expires_at ? new Date(at.expires_at).toISOString() : (at.expiresAt ? new Date(at.expiresAt).toISOString() : null),
+    createdAt: at.created_at ? new Date(at.created_at).toISOString() : (at.createdAt ? new Date(at.createdAt).toISOString() : null),
+    usedAt: at.used_at ? new Date(at.used_at).toISOString() : (at.usedAt ? new Date(at.usedAt).toISOString() : null)
   };
 }
 
 function mapOutbox(o) {
+  if (!o) return null;
   return {
     id: o.id,
-    userId: o.user_id,
-    toEmail: o.to_email,
-    to: o.to_email, // Preserve 'to' for compatibility
+    userId: o.user_id || o.userId,
+    toEmail: o.to_email || o.toEmail || o.to,
+    to: o.to || o.to_email || o.toEmail,
     kind: o.kind,
     status: o.status,
     link: o.link,
-    createdAt: o.created_at ? new Date(o.created_at).toISOString() : null,
-    sentAt: o.sent_at ? new Date(o.sent_at).toISOString() : null
+    createdAt: o.created_at ? new Date(o.created_at).toISOString() : (o.createdAt ? new Date(o.createdAt).toISOString() : null),
+    sentAt: o.sent_at ? new Date(o.sent_at).toISOString() : (o.sentAt ? new Date(o.sentAt).toISOString() : null)
   };
 }
 
 function mapHistoricalAnalytics(row) {
+  if (!row) return null;
   return {
     id: row.id,
-    userId: row.user_id,
+    userId: row.user_id || row.userId,
     date: row.date ? new Date(row.date).toISOString().split('T')[0] : null,
-    leadsCount: Number(row.leads_count || 0),
-    approvalsCount: Number(row.approvals_count || 0),
-    rejectionsCount: Number(row.rejections_count || 0),
-    avgResponseTimeSeconds: Number(row.avg_response_time_seconds || 0),
-    timeSavedMinutes: Number(row.time_saved_minutes || 0),
-    createdAt: row.created_at ? new Date(row.created_at).toISOString() : null
+    leadsCount: Number(row.leads_count !== undefined ? row.leads_count : (row.leadsCount !== undefined ? row.leadsCount : 0)),
+    approvalsCount: Number(row.approvals_count !== undefined ? row.approvals_count : (row.approvalsCount !== undefined ? row.approvalsCount : 0)),
+    rejectionsCount: Number(row.rejections_count !== undefined ? row.rejections_count : (row.rejectionsCount !== undefined ? row.rejectionsCount : 0)),
+    avgResponseTimeSeconds: Number(row.avg_response_time_seconds !== undefined ? row.avg_response_time_seconds : (row.avgResponseTimeSeconds !== undefined ? row.avgResponseTimeSeconds : 0)),
+    timeSavedMinutes: Number(row.time_saved_minutes !== undefined ? row.time_saved_minutes : (row.timeSavedMinutes !== undefined ? row.timeSavedMinutes : 0)),
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : (row.createdAt ? new Date(row.createdAt).toISOString() : null)
+  };
+}
+
+function createLocalRepository({ seedStorePath, storePath }) {
+  async function perform(collection, fn) {
+    return runLocked(async () => {
+      const store = await readJson(storePath, seedStorePath);
+      if (!Array.isArray(store[collection])) store[collection] = [];
+      const result = await fn(store[collection], store);
+      await writeJson(storePath, store);
+      return result;
+    });
+  }
+
+  return {
+    mode: "local_json",
+    users: {
+      async getById(id) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapUser(store.users?.find(u => u.id === id));
+      },
+      async getByEmail(email) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapUser(store.users?.find(u => u.email?.toLowerCase() === email?.toLowerCase()));
+      },
+      async create(user) {
+        await perform("users", (coll) => coll.push(user));
+        return user;
+      },
+      async update(id, updates) {
+        return perform("users", (coll) => {
+          const u = coll.find(item => item.id === id);
+          if (u) Object.assign(u, updates);
+          return mapUser(u);
+        });
+      },
+      async delete(id) {
+        return perform("users", (coll, store) => {
+          const idx = coll.findIndex(item => item.id === id);
+          if (idx !== -1) coll.splice(idx, 1);
+          ["businesses", "integrations", "workflows", "leads", "activity", "approvals", "authTokens", "outbox", "historicalAnalytics"].forEach(col => {
+            if (Array.isArray(store[col])) {
+              store[col] = store[col].filter(item => (item.userId || item.user_id) !== id);
+            }
+          });
+        });
+      },
+      async list() {
+        const store = await readJson(storePath, seedStorePath);
+        return (store.users || []).map(mapUser);
+      }
+    },
+    businesses: {
+      async getByUserId(userId) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapBusiness(store.businesses?.find(b => (b.userId || b.user_id) === userId));
+      },
+      async create(business) {
+        await perform("businesses", (coll) => coll.push(business));
+        return business;
+      },
+      async updateByUserId(userId, updates) {
+        return perform("businesses", (coll) => {
+          const b = coll.find(item => (item.userId || item.user_id) === userId);
+          if (b) Object.assign(b, updates);
+          return mapBusiness(b);
+        });
+      }
+    },
+    integrations: {
+      async getByUserIdAndProvider(userId, provider) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapIntegration(store.integrations?.find(i => (i.userId || i.user_id) === userId && i.provider === provider));
+      },
+      async listConnectedGmail() {
+        const store = await readJson(storePath, seedStorePath);
+        return (store.integrations || []).filter(i => i.provider === "gmail" && i.status === "connected" && (i.encryptedCredentials || i.encrypted_credentials)).map(mapIntegration);
+      },
+      async listByUserId(userId) {
+        const store = await readJson(storePath, seedStorePath);
+        return (store.integrations || []).filter(i => (i.userId || i.user_id) === userId).map(mapIntegration);
+      },
+      async create(integration) {
+        await perform("integrations", (coll) => coll.push(integration));
+        return integration;
+      },
+      async upsert(userId, provider, values) {
+        return perform("integrations", (coll) => {
+          let i = coll.find(item => (item.userId || item.user_id) === userId && item.provider === provider);
+          if (!i) {
+            const { id } = require("./src/utils/helpers");
+            i = { id: id("int"), userId, provider, createdAt: new Date().toISOString() };
+            coll.push(i);
+          }
+          Object.assign(i, values, { updatedAt: new Date().toISOString() });
+          return mapIntegration(i);
+        });
+      },
+      async updateLastSyncedAt(userId, timestamp) {
+        return perform("integrations", (coll) => {
+          const i = coll.find(item => (item.userId || item.user_id) === userId && item.provider === "gmail");
+          if (i) {
+            i.lastSyncedAt = timestamp;
+            i.last_synced_at = timestamp;
+            i.updatedAt = timestamp;
+          }
+          return mapIntegration(i);
+        });
+      },
+      async delete(id) {
+        return perform("integrations", (coll) => {
+          const idx = coll.findIndex(item => item.id === id);
+          if (idx !== -1) coll.splice(idx, 1);
+        });
+      }
+    },
+    templates: {
+      async list() {
+        const store = await readJson(storePath, seedStorePath);
+        return (store.templates || []).map(mapTemplate);
+      },
+      async getById(id) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapTemplate(store.templates?.find(t => t.id === id));
+      }
+    },
+    workflows: {
+      async listByUserId(userId) {
+        const store = await readJson(storePath, seedStorePath);
+        return (store.workflows || []).filter(w => (w.userId || w.user_id) === userId).map(mapWorkflow);
+      },
+      async getById(id) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapWorkflow(store.workflows?.find(w => w.id === id));
+      },
+      async create(workflow) {
+        await perform("workflows", (coll) => coll.push(workflow));
+        return workflow;
+      },
+      async update(id, updates) {
+        return perform("workflows", (coll) => {
+          const w = coll.find(item => item.id === id);
+          if (w) Object.assign(w, updates);
+          return mapWorkflow(w);
+        });
+      },
+      async incrementRuns(id) {
+        return perform("workflows", (coll) => {
+          const w = coll.find(item => item.id === id);
+          if (w) w.runs = (w.runs || 0) + 1;
+          return mapWorkflow(w);
+        });
+      },
+      async delete(id) {
+        return perform("workflows", (coll) => {
+          const idx = coll.findIndex(item => item.id === id);
+          if (idx !== -1) coll.splice(idx, 1);
+        });
+      }
+    },
+    leads: {
+      async listByUserId(userId) {
+        const store = await readJson(storePath, seedStorePath);
+        return (store.leads || []).filter(l => (l.userId || l.user_id) === userId).map(mapLead);
+      },
+      async getById(id) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapLead(store.leads?.find(l => l.id === id));
+      },
+      async create(lead) {
+        await perform("leads", (coll) => coll.push(lead));
+        return lead;
+      },
+      async update(id, updates) {
+        return perform("leads", (coll) => {
+          const l = coll.find(item => item.id === id);
+          if (l) Object.assign(l, updates);
+          return mapLead(l);
+        });
+      },
+      async getByGmailMessageId(userId, gmailMessageId) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapLead(store.leads?.find(l => (l.userId || l.user_id) === userId && (l.gmailMessageId || l.gmail_message_id) === gmailMessageId));
+      }
+    },
+    approvals: {
+      async listByUserId(userId) {
+        const store = await readJson(storePath, seedStorePath);
+        return (store.approvals || []).filter(a => (a.userId || a.user_id) === userId).map(mapApproval);
+      },
+      async getById(id) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapApproval(store.approvals?.find(a => a.id === id));
+      },
+      async getByLeadId(leadId) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapApproval(store.approvals?.find(a => (a.leadId || a.lead_id) === leadId));
+      },
+      async create(approval) {
+        await perform("approvals", (coll) => coll.push(approval));
+        return approval;
+      },
+      async update(id, updates) {
+        return perform("approvals", (coll) => {
+          const a = coll.find(item => item.id === id);
+          if (a) Object.assign(a, updates);
+          return mapApproval(a);
+        });
+      }
+    },
+    activity: {
+      async listByUserId(userId) {
+        const store = await readJson(storePath, seedStorePath);
+        return (store.activity || []).filter(ac => (ac.userId || ac.user_id) === userId).map(mapActivity);
+      },
+      async create(act) {
+        const { id, now } = require("./src/utils/helpers");
+        const row = { id: id("act"), createdAt: now(), status: "success", ...act };
+        await perform("activity", (coll) => coll.unshift(row));
+        return mapActivity(row);
+      }
+    },
+    authTokens: {
+      async create(token) {
+        await perform("authTokens", (coll) => coll.push(token));
+        return token;
+      },
+      async getByKindAndHash(kind, tokenHash) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapAuthToken(store.authTokens?.find(t => t.kind === kind && (t.tokenHash === tokenHash || t.token_hash === tokenHash || t.token === tokenHash)));
+      },
+      async update(id, updates) {
+        return perform("authTokens", (coll) => {
+          const t = coll.find(item => item.id === id);
+          if (t) Object.assign(t, updates);
+          return mapAuthToken(t);
+        });
+      },
+      async delete(id) {
+        return perform("authTokens", (coll) => {
+          const idx = coll.findIndex(item => item.id === id);
+          if (idx !== -1) coll.splice(idx, 1);
+        });
+      },
+      async consumeOauthState(token, kind) {
+        return runLocked(async () => {
+          const store = await readJson(storePath, seedStorePath);
+          const idx = store.authTokens?.findIndex(t => t.kind === kind && (t.token === token || t.tokenHash === token || t.token_hash === token) && new Date(t.expiresAt || t.expires_at) > new Date()) ?? -1;
+          if (idx === -1) return null;
+          const match = store.authTokens[idx];
+          store.authTokens.splice(idx, 1);
+          await writeJson(storePath, store);
+          return mapAuthToken(match);
+        });
+      }
+    },
+    outbox: {
+      async create(item) {
+        await perform("outbox", (coll) => coll.push(item));
+        return mapOutbox(item);
+      },
+      async update(id, updates) {
+        return perform("outbox", (coll) => {
+          const o = coll.find(item => item.id === id);
+          if (o) Object.assign(o, updates);
+          return mapOutbox(o);
+        });
+      },
+      async list() {
+        const store = await readJson(storePath, seedStorePath);
+        return (store.outbox || []).map(mapOutbox);
+      }
+    },
+    historicalAnalytics: {
+      async listByUserId(userId) {
+        const store = await readJson(storePath, seedStorePath);
+        return (store.historicalAnalytics || []).filter(h => (h.userId || h.user_id) === userId).map(mapHistoricalAnalytics);
+      },
+      async getByDate(userId, date) {
+        const store = await readJson(storePath, seedStorePath);
+        return mapHistoricalAnalytics(store.historicalAnalytics?.find(h => (h.userId || h.user_id) === userId && h.date === date));
+      },
+      async create(row) {
+        await perform("historicalAnalytics", (coll) => coll.push(row));
+        return mapHistoricalAnalytics(row);
+      },
+      async update(id, updates) {
+        return perform("historicalAnalytics", (coll) => {
+          const h = coll.find(item => item.id === id);
+          if (h) Object.assign(h, updates);
+          return mapHistoricalAnalytics(h);
+        });
+      }
+    },
+    processedWebhookEvents: {
+      async has(value) {
+        const store = await readJson(storePath, seedStorePath);
+        return store.processedWebhookEvents?.some(v => v === value || v.value === value) || false;
+      },
+      async create(value) {
+        await perform("processedWebhookEvents", (coll) => coll.push(value));
+      }
+    },
+    close: async () => {}
   };
 }
 
@@ -222,11 +500,10 @@ function createPostgresRepository({ databaseUrl, seedStorePath }) {
     max: Number(process.env.DATABASE_POOL_SIZE || 5),
     idle_timeout: 20,
     connect_timeout: 10,
-    prepare: false // Required for Supabase PgBouncer
+    prepare: false
   });
 
   let connectionVerified = false;
-
   async function ensureConnection() {
     if (connectionVerified) return;
     try {
@@ -234,487 +511,467 @@ function createPostgresRepository({ databaseUrl, seedStorePath }) {
       connectionVerified = true;
       console.log("✅ PostgreSQL connection established");
     } catch (error) {
-      console.error("❌ PostgreSQL connection failed");
-      console.error(error);
+      console.error("❌ PostgreSQL connection failed:", error.message);
       throw error;
     }
   }
 
-  async function write(store) {
-    await ensureConnection();
-    const normalized = normalizeStore(store);
-
-    await sql.begin(async (tx) => {
-      // 1. Sync users
-      const currentUsers = await tx`SELECT id FROM public.users`;
-      const currentUserIds = new Set(currentUsers.map(r => r.id));
-      const newUserIds = new Set(normalized.users.map(item => item.id));
-
-      for (const item of normalized.users) {
-        if (currentUserIds.has(item.id)) {
-          await tx`
-            UPDATE public.users SET
-              name = ${item.name},
-              email = ${item.email},
-              password_hash = ${item.passwordHash || null},
-              email_verified = ${item.emailVerified || false},
-              google_id = ${item.googleId || null},
-              plan = ${item.plan || "free"},
-              billing = ${item.billing ? tx.json(item.billing) : null},
-              email_verified_at = ${item.emailVerifiedAt || null},
-              password_changed_at = ${item.passwordChangedAt || null}
-            WHERE id = ${item.id}
-          `;
-        } else {
-          await tx`
-            INSERT INTO public.users (
-              id, name, email, password_hash, email_verified, google_id, plan, billing, created_at, email_verified_at, password_changed_at
-            ) VALUES (
-              ${item.id}, ${item.name}, ${item.email}, ${item.passwordHash || null}, ${item.emailVerified || false},
-              ${item.googleId || null}, ${item.plan || "free"}, ${item.billing ? tx.json(item.billing) : null},
-              ${item.createdAt}, ${item.emailVerifiedAt || null}, ${item.passwordChangedAt || null}
-            )
-          `;
-        }
-      }
-      for (const id of currentUserIds) {
-        if (!newUserIds.has(id)) {
-          await tx`DELETE FROM public.users WHERE id = ${id}`;
-        }
-      }
-
-      // 2. Sync businesses
-      const currentBiz = await tx`SELECT id FROM public.businesses`;
-      const currentBizIds = new Set(currentBiz.map(r => r.id));
-      const newBizIds = new Set(normalized.businesses.map(item => item.id));
-
-      for (const item of normalized.businesses) {
-        if (currentBizIds.has(item.id)) {
-          await tx`
-            UPDATE public.businesses SET
-              user_id = ${item.userId},
-              name = ${item.name},
-              type = ${item.type || "other"},
-              tone = ${item.tone || "professional"},
-              goals = ${item.goals || ["lead_follow_up"]},
-              updated_at = ${item.updatedAt}
-            WHERE id = ${item.id}
-          `;
-        } else {
-          await tx`
-            INSERT INTO public.businesses (
-              id, user_id, name, type, tone, goals, created_at, updated_at
-            ) VALUES (
-              ${item.id}, ${item.userId}, ${item.name}, ${item.type || "other"}, ${item.tone || "professional"},
-              ${item.goals || ["lead_follow_up"]}, ${item.createdAt}, ${item.updatedAt}
-            )
-          `;
-        }
-      }
-      for (const id of currentBizIds) {
-        if (!newBizIds.has(id)) {
-          await tx`DELETE FROM public.businesses WHERE id = ${id}`;
-        }
-      }
-
-      // 3. Sync integrations
-      const currentInt = await tx`SELECT id FROM public.integrations`;
-      const currentIntIds = new Set(currentInt.map(r => r.id));
-      const newIntIds = new Set(normalized.integrations.map(item => item.id));
-
-      for (const item of normalized.integrations) {
-        if (currentIntIds.has(item.id)) {
-          await tx`
-            UPDATE public.integrations SET
-              user_id = ${item.userId},
-              provider = ${item.provider},
-              status = ${item.status || "connected"},
-              encrypted_credentials = ${item.encryptedCredentials || null},
-              connected_email = ${item.connectedEmail || null},
-              updated_at = ${item.updatedAt}
-            WHERE id = ${item.id}
-          `;
-        } else {
-          await tx`
-            INSERT INTO public.integrations (
-              id, user_id, provider, status, encrypted_credentials, connected_email, created_at, updated_at
-            ) VALUES (
-              ${item.id}, ${item.userId}, ${item.provider}, ${item.status || "connected"},
-              ${item.encryptedCredentials || null}, ${item.connectedEmail || null}, ${item.createdAt}, ${item.updatedAt}
-            )
-          `;
-        }
-      }
-      for (const id of currentIntIds) {
-        if (!newIntIds.has(id)) {
-          await tx`DELETE FROM public.integrations WHERE id = ${id}`;
-        }
-      }
-
-      // 4. Sync templates
-      const currentTpl = await tx`SELECT id FROM public.workflow_templates`;
-      const currentTplIds = new Set(currentTpl.map(r => r.id));
-      const newTplIds = new Set(normalized.templates.map(item => item.id));
-
-      for (const item of normalized.templates) {
-        if (currentTplIds.has(item.id)) {
-          await tx`
-            UPDATE public.workflow_templates SET
-              title = ${item.title},
-              description = ${item.description},
-              category = ${item.category},
-              recommended = ${item.recommended || false},
-              trigger_key = ${item.triggerKey},
-              actions = ${item.actions ? tx.json(item.actions) : "[]"}::jsonb
-            WHERE id = ${item.id}
-          `;
-        } else {
-          await tx`
-            INSERT INTO public.workflow_templates (
-              id, title, description, category, recommended, trigger_key, actions
-            ) VALUES (
-              ${item.id}, ${item.title}, ${item.description}, ${item.category}, ${item.recommended || false},
-              ${item.triggerKey}, ${item.actions ? tx.json(item.actions) : "[]"}::jsonb
-            )
-          `;
-        }
-      }
-      for (const id of currentTplIds) {
-        if (!newTplIds.has(id)) {
-          await tx`DELETE FROM public.workflow_templates WHERE id = ${id}`;
-        }
-      }
-
-      // 5. Sync workflows
-      const currentWf = await tx`SELECT id FROM public.workflows`;
-      const currentWfIds = new Set(currentWf.map(r => r.id));
-      const newWfIds = new Set(normalized.workflows.map(item => item.id));
-
-      for (const item of normalized.workflows) {
-        if (currentWfIds.has(item.id)) {
-          await tx`
-            UPDATE public.workflows SET
-              user_id = ${item.userId},
-              template_id = ${item.templateId || null},
-              name = ${item.name},
-              status = ${item.status || "active"},
-              trigger_key = ${item.triggerKey},
-              actions = ${item.actions ? tx.json(item.actions) : "[]"}::jsonb,
-              runs = ${item.runs || 0},
-              updated_at = ${item.updatedAt}
-            WHERE id = ${item.id}
-          `;
-        } else {
-          await tx`
-            INSERT INTO public.workflows (
-              id, user_id, template_id, name, status, trigger_key, actions, runs, created_at, updated_at
-            ) VALUES (
-              ${item.id}, ${item.userId}, ${item.templateId || null}, ${item.name}, ${item.status || "active"},
-              ${item.triggerKey}, ${item.actions ? tx.json(item.actions) : "[]"}::jsonb, ${item.runs || 0}, ${item.createdAt}, ${item.updatedAt}
-            )
-          `;
-        }
-      }
-      for (const id of currentWfIds) {
-        if (!newWfIds.has(id)) {
-          await tx`DELETE FROM public.workflows WHERE id = ${id}`;
-        }
-      }
-
-      // 6. Sync leads
-      const currentLeads = await tx`SELECT id FROM public.leads`;
-      const currentLeadIds = new Set(currentLeads.map(r => r.id));
-      const newLeadIds = new Set(normalized.leads.map(item => item.id));
-
-      for (const item of normalized.leads) {
-        if (currentLeadIds.has(item.id)) {
-          await tx`
-            UPDATE public.leads SET
-              user_id = ${item.userId},
-              name = ${item.name},
-              email = ${item.email || null},
-              phone = ${item.phone || null},
-              message = ${item.message || ""},
-              source = ${item.source || "manual"},
-              status = ${item.status || "new"}
-            WHERE id = ${item.id}
-          `;
-        } else {
-          await tx`
-            INSERT INTO public.leads (
-              id, user_id, name, email, phone, message, source, status, created_at
-            ) VALUES (
-              ${item.id}, ${item.userId}, ${item.name}, ${item.email || null}, ${item.phone || null},
-              ${item.message || ""}, ${item.source || "manual"}, ${item.status || "new"}, ${item.createdAt}
-            )
-          `;
-        }
-      }
-      for (const id of currentLeadIds) {
-        if (!newLeadIds.has(id)) {
-          await tx`DELETE FROM public.leads WHERE id = ${id}`;
-        }
-      }
-
-      // 7. Sync approvals
-      const currentAppr = await tx`SELECT id FROM public.approvals`;
-      const currentApprIds = new Set(currentAppr.map(r => r.id));
-      const newApprIds = new Set(normalized.approvals.map(item => item.id));
-
-      for (const item of normalized.approvals) {
-        if (currentApprIds.has(item.id)) {
-          await tx`
-            UPDATE public.approvals SET
-              user_id = ${item.userId},
-              lead_id = ${item.leadId},
-              status = ${item.status || "pending"},
-              kind = ${item.kind || "follow_up_draft"},
-              draft = ${item.draft || null},
-              ai_provider = ${item.aiProvider || null},
-              delivery_provider = ${item.deliveryProvider || null},
-              resolved_at = ${item.resolvedAt || null}
-            WHERE id = ${item.id}
-          `;
-        } else {
-          await tx`
-            INSERT INTO public.approvals (
-              id, user_id, lead_id, status, kind, draft, ai_provider, delivery_provider, created_at, resolved_at
-            ) VALUES (
-              ${item.id}, ${item.userId}, ${item.leadId}, ${item.status || "pending"}, ${item.kind || "follow_up_draft"},
-              ${item.draft || null}, ${item.aiProvider || null}, ${item.deliveryProvider || null}, ${item.createdAt}, ${item.resolvedAt || null}
-            )
-          `;
-        }
-      }
-      for (const id of currentApprIds) {
-        if (!newApprIds.has(id)) {
-          await tx`DELETE FROM public.approvals WHERE id = ${id}`;
-        }
-      }
-
-      // 8. Sync activity logs
-      const currentAct = await tx`SELECT id FROM public.activity_logs`;
-      const currentActIds = new Set(currentAct.map(r => r.id));
-      const newActIds = new Set(normalized.activity.map(item => item.id));
-
-      for (const item of normalized.activity) {
-        if (currentActIds.has(item.id)) {
-          await tx`
-            UPDATE public.activity_logs SET
-              user_id = ${item.userId},
-              type = ${item.type},
-              label = ${item.label},
-              source = ${item.source || "system"},
-              status = ${item.status || "success"}
-            WHERE id = ${item.id}
-          `;
-        } else {
-          await tx`
-            INSERT INTO public.activity_logs (
-              id, user_id, type, label, source, status, created_at
-            ) VALUES (
-              ${item.id}, ${item.userId}, ${item.type}, ${item.label}, ${item.source || "system"}, ${item.status || "success"}, ${item.createdAt}
-            )
-          `;
-        }
-      }
-      for (const id of currentActIds) {
-        if (!newActIds.has(id)) {
-          await tx`DELETE FROM public.activity_logs WHERE id = ${id}`;
-        }
-      }
-
-      // 9. Sync webhook events
-      const currentWebhooks = await tx`SELECT value FROM public.processed_webhook_events`;
-      const currentWebhookValues = new Set(currentWebhooks.map(r => r.value));
-      const newWebhookValues = new Set(normalized.processedWebhookEvents.map(v => typeof v === "string" ? v : v.value || v.id));
-
-      for (const val of newWebhookValues) {
-        if (!currentWebhookValues.has(val)) {
-          await tx`
-            INSERT INTO public.processed_webhook_events (
-              value, processed_at
-            ) VALUES (
-              ${val}, NOW()
-            )
-          `;
-        }
-      }
-      for (const val of currentWebhookValues) {
-        if (!newWebhookValues.has(val)) {
-          await tx`DELETE FROM public.processed_webhook_events WHERE value = ${val}`;
-        }
-      }
-
-      // 10. Sync auth tokens
-      const currentTok = await tx`SELECT id FROM public.auth_tokens`;
-      const currentTokIds = new Set(currentTok.map(r => r.id));
-      const newTokIds = new Set(normalized.authTokens.map(item => item.id));
-
-      for (const item of normalized.authTokens) {
-        if (currentTokIds.has(item.id)) {
-          await tx`
-            UPDATE public.auth_tokens SET
-              user_id = ${item.userId},
-              kind = ${item.kind},
-              token_hash = ${item.tokenHash},
-              expires_at = ${item.expiresAt},
-              used_at = ${item.usedAt || null}
-            WHERE id = ${item.id}
-          `;
-        } else {
-          await tx`
-            INSERT INTO public.auth_tokens (
-              id, user_id, kind, token_hash, expires_at, created_at, used_at
-            ) VALUES (
-              ${item.id}, ${item.userId}, ${item.kind}, ${item.tokenHash}, ${item.expiresAt}, ${item.createdAt}, ${item.usedAt || null}
-            )
-          `;
-        }
-      }
-      for (const id of currentTokIds) {
-        if (!newTokIds.has(id)) {
-          await tx`DELETE FROM public.auth_tokens WHERE id = ${id}`;
-        }
-      }
-
-      // 11. Sync outbox
-      const currentOutbox = await tx`SELECT id FROM public.outbox`;
-      const currentOutboxIds = new Set(currentOutbox.map(r => r.id));
-      const newOutboxIds = new Set(normalized.outbox.map(item => item.id));
-
-      for (const item of normalized.outbox) {
-        if (currentOutboxIds.has(item.id)) {
-          await tx`
-            UPDATE public.outbox SET
-              user_id = ${item.userId},
-              to_email = ${item.toEmail || item.to},
-              kind = ${item.kind},
-              status = ${item.status || "queued"},
-              link = ${item.link || null},
-              sent_at = ${item.sentAt || null}
-            WHERE id = ${item.id}
-          `;
-        } else {
-          await tx`
-            INSERT INTO public.outbox (
-              id, user_id, to_email, kind, status, link, created_at, sent_at
-            ) VALUES (
-              ${item.id}, ${item.userId}, ${item.toEmail || item.to}, ${item.kind}, ${item.status || "queued"},
-              ${item.link || null}, ${item.createdAt}, ${item.sentAt || null}
-            )
-          `;
-        }
-      }
-      for (const id of currentOutboxIds) {
-        if (!newOutboxIds.has(id)) {
-          await tx`DELETE FROM public.outbox WHERE id = ${id}`;
-        }
-      }
-
-      // 12. Sync historicalAnalytics
-      const currentAnalytics = await tx`SELECT id FROM public.historical_analytics`;
-      const currentAnalyticsIds = new Set(currentAnalytics.map(r => r.id));
-      const newAnalyticsIds = new Set(normalized.historicalAnalytics.map(item => item.id));
-
-      for (const item of normalized.historicalAnalytics) {
-        if (currentAnalyticsIds.has(item.id)) {
-          await tx`
-            UPDATE public.historical_analytics SET
-              user_id = ${item.userId},
-              date = ${item.date},
-              leads_count = ${item.leadsCount},
-              approvals_count = ${item.approvalsCount},
-              rejections_count = ${item.rejectionsCount},
-              avg_response_time_seconds = ${item.avgResponseTimeSeconds},
-              time_saved_minutes = ${item.timeSavedMinutes},
-              created_at = ${item.createdAt}
-            WHERE id = ${item.id}
-          `;
-        } else {
-          await tx`
-            INSERT INTO public.historical_analytics (
-              id, user_id, date, leads_count, approvals_count, rejections_count, avg_response_time_seconds, time_saved_minutes, created_at
-            ) VALUES (
-              ${item.id}, ${item.userId}, ${item.date}, ${item.leadsCount}, ${item.approvalsCount}, ${item.rejectionsCount}, ${item.avgResponseTimeSeconds}, ${item.timeSavedMinutes}, ${item.createdAt}
-            )
-          `;
-        }
-      }
-      for (const id of currentAnalyticsIds) {
-        if (!newAnalyticsIds.has(id)) {
-          await tx`DELETE FROM public.historical_analytics WHERE id = ${id}`;
-        }
-      }
-    });
-  }
-
   return {
     mode: "supabase_postgres",
-
-    async read() {
-      await ensureConnection();
-
-      // Read from all 12 tables concurrently
-      const [
-        users,
-        businesses,
-        integrations,
-        templates,
-        workflows,
-        leads,
-        approvals,
-        activity,
-        webhookEvents,
-        tokens,
-        outbox,
-        analytics
-      ] = await Promise.all([
-        sql`SELECT * FROM public.users ORDER BY created_at ASC`,
-        sql`SELECT * FROM public.businesses ORDER BY created_at ASC`,
-        sql`SELECT * FROM public.integrations ORDER BY created_at ASC`,
-        sql`SELECT * FROM public.workflow_templates`,
-        sql`SELECT * FROM public.workflows ORDER BY created_at ASC`,
-        sql`SELECT * FROM public.leads ORDER BY created_at ASC`,
-        sql`SELECT * FROM public.approvals ORDER BY created_at ASC`,
-        sql`SELECT * FROM public.activity_logs ORDER BY created_at ASC`,
-        sql`SELECT * FROM public.processed_webhook_events ORDER BY processed_at ASC`,
-        sql`SELECT * FROM public.auth_tokens ORDER BY created_at ASC`,
-        sql`SELECT * FROM public.outbox ORDER BY created_at ASC`,
-        sql`SELECT * FROM public.historical_analytics ORDER BY date ASC`
-      ]);
-
-      if (!users.length) {
-        console.log("🌱 No records found in normalized DB, seeding database...");
-        const seed = normalizeStore(
-          JSON.parse(
-            fs.readFileSync(seedStorePath, "utf8")
+    users: {
+      async getById(id) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.users WHERE id = ${id}`;
+        return rows.length ? mapUser(rows[0]) : null;
+      },
+      async getByEmail(email) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.users WHERE LOWER(email) = ${email.toLowerCase()}`;
+        return rows.length ? mapUser(rows[0]) : null;
+      },
+      async create(user) {
+        await ensureConnection();
+        await sql`
+          INSERT INTO public.users (
+            id, name, email, password_hash, email_verified, google_id, plan, billing, created_at, email_verified_at, password_changed_at
+          ) VALUES (
+            ${user.id}, ${user.name}, ${user.email}, ${user.passwordHash || null}, ${user.emailVerified || false},
+            ${user.googleId || null}, ${user.plan || "free"}, ${user.billing ? sql.json(user.billing) : null},
+            ${user.createdAt || new Date().toISOString()}, ${user.emailVerifiedAt || null}, ${user.passwordChangedAt || null}
           )
-        );
-        await write(seed);
-        return seed;
+        `;
+        return user;
+      },
+      async update(id, updates) {
+        await ensureConnection();
+        const mapped = {};
+        if (updates.name !== undefined) mapped.name = updates.name;
+        if (updates.email !== undefined) mapped.email = updates.email;
+        if (updates.passwordHash !== undefined) mapped.password_hash = updates.passwordHash;
+        if (updates.emailVerified !== undefined) mapped.email_verified = updates.emailVerified;
+        if (updates.googleId !== undefined) mapped.google_id = updates.googleId;
+        if (updates.plan !== undefined) mapped.plan = updates.plan;
+        if (updates.billing !== undefined) mapped.billing = updates.billing ? sql.json(updates.billing) : null;
+        if (updates.emailVerifiedAt !== undefined) mapped.email_verified_at = updates.emailVerifiedAt;
+        if (updates.passwordChangedAt !== undefined) mapped.password_changed_at = updates.passwordChangedAt;
+
+        if (Object.keys(mapped).length === 0) return this.getById(id);
+
+        const rows = await sql`
+          UPDATE public.users SET ${sql(mapped)} WHERE id = ${id} RETURNING *
+        `;
+        return rows.length ? mapUser(rows[0]) : null;
+      },
+      async delete(id) {
+        await ensureConnection();
+        await sql`DELETE FROM public.users WHERE id = ${id}`;
+      },
+      async list() {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.users ORDER BY created_at ASC`;
+        return rows.map(mapUser);
       }
-
-      const store = emptyStore();
-      store.users = users.map(mapUser);
-      store.businesses = businesses.map(mapBusiness);
-      store.integrations = integrations.map(mapIntegration);
-      store.templates = templates.map(mapTemplate);
-      store.workflows = workflows.map(mapWorkflow);
-      store.leads = leads.map(mapLead);
-      store.approvals = approvals.map(mapApproval);
-      store.activity = activity.map(mapActivity);
-      store.processedWebhookEvents = webhookEvents.map(row => row.value);
-      store.authTokens = tokens.map(mapAuthToken);
-      store.outbox = outbox.map(mapOutbox);
-      store.historicalAnalytics = analytics.map(mapHistoricalAnalytics);
-
-      return store;
     },
+    businesses: {
+      async getByUserId(userId) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.businesses WHERE user_id = ${userId}`;
+        return rows.length ? mapBusiness(rows[0]) : null;
+      },
+      async create(b) {
+        await ensureConnection();
+        await sql`
+          INSERT INTO public.businesses (
+            id, user_id, name, type, tone, goals, created_at, updated_at
+          ) VALUES (
+            ${b.id}, ${b.userId}, ${b.name}, ${b.type || "other"}, ${b.tone || "professional"},
+            ${b.goals || ["lead_follow_up"]}, ${b.createdAt || new Date().toISOString()}, ${b.updatedAt || new Date().toISOString()}
+          )
+        `;
+        return b;
+      },
+      async updateByUserId(userId, updates) {
+        await ensureConnection();
+        const mapped = {};
+        if (updates.name !== undefined) mapped.name = updates.name;
+        if (updates.type !== undefined) mapped.type = updates.type;
+        if (updates.tone !== undefined) mapped.tone = updates.tone;
+        if (updates.goals !== undefined) mapped.goals = updates.goals;
+        mapped.updated_at = updates.updatedAt || new Date().toISOString();
 
-    write,
+        const rows = await sql`
+          UPDATE public.businesses SET ${sql(mapped)} WHERE user_id = ${userId} RETURNING *
+        `;
+        return rows.length ? mapBusiness(rows[0]) : null;
+      }
+    },
+    integrations: {
+      async getByUserIdAndProvider(userId, provider) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.integrations WHERE user_id = ${userId} AND provider = ${provider}`;
+        return rows.length ? mapIntegration(rows[0]) : null;
+      },
+      async listConnectedGmail() {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.integrations WHERE provider = 'gmail' AND status = 'connected' AND encrypted_credentials IS NOT NULL`;
+        return rows.map(mapIntegration);
+      },
+      async listByUserId(userId) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.integrations WHERE user_id = ${userId}`;
+        return rows.map(mapIntegration);
+      },
+      async create(i) {
+        await ensureConnection();
+        await sql`
+          INSERT INTO public.integrations (
+            id, user_id, provider, status, encrypted_credentials, connected_email, created_at, updated_at
+          ) VALUES (
+            ${i.id}, ${i.userId}, ${i.provider}, ${i.status || "connected"},
+            ${i.encryptedCredentials || null}, ${i.connectedEmail || null}, ${i.createdAt || new Date().toISOString()}, ${i.updatedAt || new Date().toISOString()}
+          )
+        `;
+        return i;
+      },
+      async upsert(userId, provider, values) {
+        await ensureConnection();
+        const existing = await this.getByUserIdAndProvider(userId, provider);
+        if (existing) {
+          const mapped = {
+            status: values.status !== undefined ? values.status : existing.status,
+            encrypted_credentials: values.encryptedCredentials !== undefined ? values.encryptedCredentials : existing.encryptedCredentials,
+            connected_email: values.connectedEmail !== undefined ? values.connectedEmail : existing.connectedEmail,
+            updated_at: new Date().toISOString()
+          };
+          const rows = await sql`
+            UPDATE public.integrations SET ${sql(mapped)} WHERE id = ${existing.id} RETURNING *
+          `;
+          return mapIntegration(rows[0]);
+        } else {
+          const { id } = require("./src/utils/helpers");
+          const i = {
+            id: id("int"),
+            userId,
+            provider,
+            status: values.status || "connected",
+            encryptedCredentials: values.encryptedCredentials || null,
+            connectedEmail: values.connectedEmail || null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          await this.create(i);
+          return i;
+        }
+      },
+      async updateLastSyncedAt(userId, timestamp) {
+        await ensureConnection();
+        const rows = await sql`
+          UPDATE public.integrations SET last_synced_at = ${timestamp}, updated_at = ${timestamp}
+          WHERE user_id = ${userId} AND provider = 'gmail' RETURNING *
+        `;
+        return rows.length ? mapIntegration(rows[0]) : null;
+      },
+      async delete(id) {
+        await ensureConnection();
+        await sql`DELETE FROM public.integrations WHERE id = ${id}`;
+      }
+    },
+    templates: {
+      async list() {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.workflow_templates`;
+        return rows.map(mapTemplate);
+      },
+      async getById(id) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.workflow_templates WHERE id = ${id}`;
+        return rows.length ? mapTemplate(rows[0]) : null;
+      }
+    },
+    workflows: {
+      async listByUserId(userId) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.workflows WHERE user_id = ${userId} ORDER BY created_at ASC`;
+        return rows.map(mapWorkflow);
+      },
+      async getById(id) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.workflows WHERE id = ${id}`;
+        return rows.length ? mapWorkflow(rows[0]) : null;
+      },
+      async create(w) {
+        await ensureConnection();
+        await sql`
+          INSERT INTO public.workflows (
+            id, user_id, template_id, name, status, trigger_key, actions, runs, created_at, updated_at
+          ) VALUES (
+            ${w.id}, ${w.userId}, ${w.templateId || null}, ${w.name}, ${w.status || "active"},
+            ${w.triggerKey || w.trigger || "lead.created"}, ${w.actions ? sql.json(w.actions) : "[]"}::jsonb, ${w.runs || 0},
+            ${w.createdAt || new Date().toISOString()}, ${w.updatedAt || new Date().toISOString()}
+          )
+        `;
+        return w;
+      },
+      async update(id, updates) {
+        await ensureConnection();
+        const mapped = {};
+        if (updates.status !== undefined) mapped.status = updates.status;
+        if (updates.runs !== undefined) mapped.runs = updates.runs;
+        mapped.updated_at = updates.updatedAt || new Date().toISOString();
 
-    async close() {
+        const rows = await sql`
+          UPDATE public.workflows SET ${sql(mapped)} WHERE id = ${id} RETURNING *
+        `;
+        return rows.length ? mapWorkflow(rows[0]) : null;
+      },
+      async incrementRuns(id) {
+        await ensureConnection();
+        const rows = await sql`
+          UPDATE public.workflows SET runs = COALESCE(runs, 0) + 1, updated_at = NOW() WHERE id = ${id} RETURNING *
+        `;
+        return rows.length ? mapWorkflow(rows[0]) : null;
+      },
+      async delete(id) {
+        await ensureConnection();
+        await sql`DELETE FROM public.workflows WHERE id = ${id}`;
+      }
+    },
+    leads: {
+      async listByUserId(userId) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.leads WHERE user_id = ${userId} ORDER BY created_at ASC`;
+        return rows.map(mapLead);
+      },
+      async getById(id) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.leads WHERE id = ${id}`;
+        return rows.length ? mapLead(rows[0]) : null;
+      },
+      async create(l) {
+        await ensureConnection();
+        await sql`
+          INSERT INTO public.leads (
+            id, user_id, name, email, phone, message, source, status, gmail_message_id, created_at
+          ) VALUES (
+            ${l.id}, ${l.userId}, ${l.name}, ${l.email || null}, ${l.phone || null},
+            ${l.message || ""}, ${l.source || "manual"}, ${l.status || "new"}, ${l.gmailMessageId || null},
+            ${l.createdAt || new Date().toISOString()}
+          )
+        `;
+        return l;
+      },
+      async update(id, updates) {
+        await ensureConnection();
+        const mapped = {};
+        if (updates.status !== undefined) mapped.status = updates.status;
+
+        if (Object.keys(mapped).length === 0) return this.getById(id);
+
+        const rows = await sql`
+          UPDATE public.leads SET ${sql(mapped)} WHERE id = ${id} RETURNING *
+        `;
+        return rows.length ? mapLead(rows[0]) : null;
+      },
+      async getByGmailMessageId(userId, gmailMessageId) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.leads WHERE user_id = ${userId} AND gmail_message_id = ${gmailMessageId}`;
+        return rows.length ? mapLead(rows[0]) : null;
+      }
+    },
+    approvals: {
+      async listByUserId(userId) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.approvals WHERE user_id = ${userId} ORDER BY created_at ASC`;
+        return rows.map(mapApproval);
+      },
+      async getById(id) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.approvals WHERE id = ${id}`;
+        return rows.length ? mapApproval(rows[0]) : null;
+      },
+      async getByLeadId(leadId) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.approvals WHERE lead_id = ${leadId}`;
+        return rows.length ? mapApproval(rows[0]) : null;
+      },
+      async create(a) {
+        await ensureConnection();
+        await sql`
+          INSERT INTO public.approvals (
+            id, user_id, lead_id, status, kind, draft, ai_provider, delivery_provider, created_at, resolved_at
+          ) VALUES (
+            ${a.id}, ${a.userId}, ${a.leadId}, ${a.status || "pending"}, ${a.kind || "follow_up_draft"},
+            ${a.draft || null}, ${a.aiProvider || null}, ${a.deliveryProvider || null},
+            ${a.createdAt || new Date().toISOString()}, ${a.resolvedAt || null}
+          )
+        `;
+        return a;
+      },
+      async update(id, updates) {
+        await ensureConnection();
+        const mapped = {};
+        if (updates.draft !== undefined) mapped.draft = updates.draft;
+        if (updates.status !== undefined) mapped.status = updates.status;
+        if (updates.deliveryProvider !== undefined) mapped.delivery_provider = updates.deliveryProvider;
+        if (updates.resolvedAt !== undefined) mapped.resolved_at = updates.resolvedAt;
+
+        if (Object.keys(mapped).length === 0) return this.getById(id);
+
+        const rows = await sql`
+          UPDATE public.approvals SET ${sql(mapped)} WHERE id = ${id} RETURNING *
+        `;
+        return rows.length ? mapApproval(rows[0]) : null;
+      }
+    },
+    activity: {
+      async listByUserId(userId) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.activity_logs WHERE user_id = ${userId} ORDER BY created_at DESC`;
+        return rows.map(mapActivity);
+      },
+      async create(act) {
+        await ensureConnection();
+        const { id, now } = require("./src/utils/helpers");
+        const actId = act.id || id("act");
+        const createdAt = act.createdAt || now();
+        await sql`
+          INSERT INTO public.activity_logs (
+            id, user_id, type, label, source, status, created_at
+          ) VALUES (
+            ${actId}, ${act.userId}, ${act.type}, ${act.label}, ${act.source || "system"}, ${act.status || "success"}, ${createdAt}
+          )
+        `;
+        return { id: actId, createdAt, status: act.status || "success", ...act };
+      }
+    },
+    authTokens: {
+      async create(token) {
+        await ensureConnection();
+        const th = token.tokenHash || token.token;
+        await sql`
+          INSERT INTO public.auth_tokens (
+            id, user_id, kind, token_hash, expires_at, created_at, used_at
+          ) VALUES (
+            ${token.id}, ${token.userId}, ${token.kind}, ${th}, ${token.expiresAt}, ${token.createdAt || new Date().toISOString()}, ${token.usedAt || null}
+          )
+        `;
+        return token;
+      },
+      async getByKindAndHash(kind, tokenHash) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.auth_tokens WHERE kind = ${kind} AND token_hash = ${tokenHash}`;
+        return rows.length ? mapAuthToken(rows[0]) : null;
+      },
+      async update(id, updates) {
+        await ensureConnection();
+        const mapped = {};
+        if (updates.usedAt !== undefined) mapped.used_at = updates.usedAt;
+
+        if (Object.keys(mapped).length === 0) return this.getById(id);
+
+        const rows = await sql`
+          UPDATE public.auth_tokens SET ${sql(mapped)} WHERE id = ${id} RETURNING *
+        `;
+        return rows.length ? mapAuthToken(rows[0]) : null;
+      },
+      async delete(id) {
+        await ensureConnection();
+        await sql`DELETE FROM public.auth_tokens WHERE id = ${id}`;
+      },
+      async consumeOauthState(token, kind) {
+        await ensureConnection();
+        const rows = await sql`
+          DELETE FROM public.auth_tokens
+          WHERE kind = ${kind} AND token_hash = ${token} AND expires_at > NOW()
+          RETURNING *
+        `;
+        return rows.length ? mapAuthToken(rows[0]) : null;
+      }
+    },
+    outbox: {
+      async create(o) {
+        await ensureConnection();
+        await sql`
+          INSERT INTO public.outbox (
+            id, user_id, to_email, kind, status, link, created_at, sent_at
+          ) VALUES (
+            ${o.id}, ${o.userId}, ${o.toEmail || o.to}, ${o.kind}, ${o.status || "queued"},
+            ${o.link || null}, ${o.createdAt || new Date().toISOString()}, ${o.sentAt || null}
+          )
+        `;
+        return o;
+      },
+      async update(id, updates) {
+        await ensureConnection();
+        const mapped = {};
+        if (updates.status !== undefined) mapped.status = updates.status;
+        if (updates.sentAt !== undefined) mapped.sent_at = updates.sentAt;
+
+        if (Object.keys(mapped).length === 0) return;
+
+        const rows = await sql`
+          UPDATE public.outbox SET ${sql(mapped)} WHERE id = ${id} RETURNING *
+        `;
+        return rows.length ? mapOutbox(rows[0]) : null;
+      },
+      async list() {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.outbox ORDER BY created_at ASC`;
+        return rows.map(mapOutbox);
+      }
+    },
+    historicalAnalytics: {
+      async listByUserId(userId) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.historical_analytics WHERE user_id = ${userId} ORDER BY date ASC`;
+        return rows.map(mapHistoricalAnalytics);
+      },
+      async getByDate(userId, date) {
+        await ensureConnection();
+        const rows = await sql`SELECT * FROM public.historical_analytics WHERE user_id = ${userId} AND date = ${date}`;
+        return rows.length ? mapHistoricalAnalytics(rows[0]) : null;
+      },
+      async create(h) {
+        await ensureConnection();
+        await sql`
+          INSERT INTO public.historical_analytics (
+            id, user_id, date, leads_count, approvals_count, rejections_count, avg_response_time_seconds, time_saved_minutes, created_at
+          ) VALUES (
+            ${h.id}, ${h.userId}, ${h.date}, ${h.leadsCount || 0}, ${h.approvalsCount || 0}, ${h.rejectionsCount || 0},
+            ${h.avgResponseTimeSeconds || 0}, ${h.timeSavedMinutes || 0}, ${h.createdAt || new Date().toISOString()}
+          )
+        `;
+        return h;
+      },
+      async update(id, updates) {
+        await ensureConnection();
+        const mapped = {};
+        if (updates.leadsCount !== undefined) mapped.leads_count = updates.leadsCount;
+        if (updates.approvalsCount !== undefined) mapped.approvals_count = updates.approvalsCount;
+        if (updates.rejectionsCount !== undefined) mapped.rejections_count = updates.rejectionsCount;
+        if (updates.avgResponseTimeSeconds !== undefined) mapped.avg_response_time_seconds = updates.avgResponseTimeSeconds;
+        if (updates.timeSavedMinutes !== undefined) mapped.time_saved_minutes = updates.timeSavedMinutes;
+
+        if (Object.keys(mapped).length === 0) return;
+
+        const rows = await sql`
+          UPDATE public.historical_analytics SET ${sql(mapped)} WHERE id = ${id} RETURNING *
+        `;
+        return rows.length ? mapHistoricalAnalytics(rows[0]) : null;
+      }
+    },
+    processedWebhookEvents: {
+      async has(value) {
+        await ensureConnection();
+        const rows = await sql`SELECT 1 FROM public.processed_webhook_events WHERE value = ${value}`;
+        return rows.length > 0;
+      },
+      async create(value) {
+        await ensureConnection();
+        await sql`INSERT INTO public.processed_webhook_events (value, processed_at) VALUES (${value}, NOW()) ON CONFLICT (value) DO NOTHING`;
+      }
+    },
+    close: async () => {
       await sql.end();
     }
   };
@@ -735,8 +992,5 @@ function createRepository({ seedStorePath, storePath }) {
 }
 
 module.exports = {
-  COLLECTIONS,
   createRepository,
-  emptyStore,
-  normalizeStore
 };

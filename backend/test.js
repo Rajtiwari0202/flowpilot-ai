@@ -16,6 +16,7 @@ const server = spawn(process.execPath, ["backend/server.js"], {
   stdio: ["ignore", "pipe", "pipe"]
 });
 
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -31,7 +32,7 @@ async function request(path, options = {}) {
 
 (async () => {
   try {
-    await wait(500);
+    await wait(2500);
     const health = await request("/health");
     assert.equal(health.response.status, 200);
     assert.equal(health.body.ok, true);
@@ -119,6 +120,13 @@ async function request(path, options = {}) {
     const dashboard = await request("/api/dashboard", { headers: auth });
     assert.equal(dashboard.response.status, 200);
     assert.equal(dashboard.body.metrics.activeAutomations >= 1, true);
+
+    const analytics = await request("/api/dashboard/analytics", { headers: auth });
+    assert.equal(analytics.response.status, 200);
+    assert.ok(Array.isArray(analytics.body.responseTimes));
+    assert.equal(analytics.body.runs.total, 1);
+    assert.equal(analytics.body.runs.approved, 1);
+    assert.equal(analytics.body.savedMetrics.leadsProcessedCount, 1);
     assert.equal(dashboard.body.metrics.pendingApprovals, 0);
     assert.equal(dashboard.body.workflows[0].runs, 1);
 
@@ -156,6 +164,15 @@ async function request(path, options = {}) {
     const login = await request("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password: "new-password-123" }) });
     assert.equal(login.response.status, 200);
     assert.ok(login.body.token);
+    assert.ok(login.body.refreshToken);
+
+    const refresh = await request("/api/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ refreshToken: login.body.refreshToken })
+    });
+    assert.equal(refresh.response.status, 200);
+    assert.ok(refresh.body.accessToken);
+    assert.ok(refresh.body.refreshToken);
 
     const oversized = await request("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password: "x".repeat(1024 * 1024 + 100) }) });
     assert.equal(oversized.response.status, 413);
@@ -189,6 +206,12 @@ async function request(path, options = {}) {
 
     const disabledBilling = await request("/api/billing/subscription", { method: "POST", headers: sandboxAuth, body: "{}" });
     assert.equal(disabledBilling.response.status, 404);
+
+    const disabledPortal = await request("/api/billing/portal", { headers: sandboxAuth });
+    assert.equal(disabledPortal.response.status, 404);
+
+    const disabledCancel = await request("/api/billing/cancel", { method: "POST", headers: sandboxAuth, body: "{}" });
+    assert.equal(disabledCancel.response.status, 404);
 
     const gmailSyncNoIntegration = await request("/api/integrations/gmail/sync", { method: "POST", headers: sandboxAuth, body: "{}" });
     assert.equal(gmailSyncNoIntegration.response.status, 400);

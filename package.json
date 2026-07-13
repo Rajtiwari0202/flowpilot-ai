@@ -20,6 +20,8 @@
     "node": ">=20"
   },
   "dependencies": {
+    "bullmq": "^5.80.2",
+    "ioredis": "^5.11.1",
     "postgres": "^3.4.9"
   }
 }

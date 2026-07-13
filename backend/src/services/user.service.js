@@ -8,41 +8,42 @@ function publicUser(user) {
 }
 
 function getUserBusiness(store, userId) {
-  return store.businesses.find((business) => business.userId === userId) || null;
+  // Keeping signature for backward compatibility, but we can query repository directly
+  const { repository } = require("../app");
+  return repository.businesses.getByUserId(userId);
 }
 
 function logActivity(store, item) {
-  const row = {
-    id: id("act"),
-    createdAt: now(),
-    status: "success",
-    ...item
-  };
-  store.activity.unshift(row);
-  return row;
+  // Keeping signature for backward compatibility, but we can query repository directly
+  const { repository } = require("../app");
+  return repository.activity.create(item);
 }
 
-function dashboardFor(store, user) {
-  const business = getUserBusiness(store, user.id);
-  const workflows = store.workflows.filter((workflow) => workflow.userId === user.id);
-  const leads = store.leads.filter((lead) => lead.userId === user.id);
-  const activity = store.activity.filter((item) => item.userId === user.id).slice(0, 10);
-  const approvals = store.approvals.filter((approval) => approval.userId === user.id && approval.status === "pending");
-  const errors = activity.filter((item) => item.status === "error");
+async function dashboardFor(user) {
+  const { repository } = require("../app");
+  const business = await repository.businesses.getByUserId(user.id);
+  const workflows = await repository.workflows.listByUserId(user.id);
+  const leads = await repository.leads.listByUserId(user.id);
+  const activityList = await repository.activity.listByUserId(user.id);
+  const activity = activityList.slice(0, 10);
+  const approvals = await repository.approvals.listByUserId(user.id);
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
+  const errors = activityList.filter((item) => item.status === "error");
+  
   return {
     user: publicUser(user),
     business,
     metrics: {
       activeAutomations: workflows.filter((workflow) => workflow.status === "active").length,
       leadsProcessedToday: leads.length,
-      pendingApprovals: approvals.length,
+      pendingApprovals: pendingApprovals.length,
       errors: errors.length,
       timeSavedMinutesThisWeek: leads.length * 12,
-      successRate: activity.length ? Math.round((activity.length - errors.length) / activity.length * 100) : 100
+      successRate: activityList.length ? Math.round((activityList.length - errors.length) / activityList.length * 100) : 100
     },
     workflows,
     activity,
-    approvals
+    approvals: pendingApprovals
   };
 }
 
@@ -93,7 +94,10 @@ async function draftFollowUp(input) {
   }
 }
 
-async function createLeadApproval(store, user, body, { writeStore, syncHubspotLead }) {
+async function createLeadApproval(user, body) {
+  const { repository } = require("../app");
+  const { syncHubspotLead } = require("./oauth.service");
+
   const lead = {
     id: id("lead"),
     userId: user.id,
@@ -103,22 +107,57 @@ async function createLeadApproval(store, user, body, { writeStore, syncHubspotLe
     message: body.message || "",
     source: body.source || "manual",
     status: "new",
+    gmailMessageId: body.gmailMessageId || null,
     createdAt: now()
   };
-  store.leads.unshift(lead);
-  const business = getUserBusiness(store, user.id);
+  await repository.leads.create(lead);
+
+  const business = await repository.businesses.getByUserId(user.id);
   const generated = await draftFollowUp({ leadName: lead.name, businessName: business?.name, tone: business?.tone, message: lead.message });
-  const approval = { id: id("appr"), userId: user.id, leadId: lead.id, status: "pending", kind: "follow_up_draft", draft: generated.draft, aiProvider: generated.provider, createdAt: now() };
-  store.approvals.unshift(approval);
-  logActivity(store, { userId: user.id, type: "lead.created", label: `${lead.name} awaiting approval`, source: lead.source, status: "pending" });
+  
+  const approval = {
+    id: id("appr"),
+    userId: user.id,
+    leadId: lead.id,
+    status: "pending",
+    kind: "follow_up_draft",
+    draft: generated.draft,
+    aiProvider: generated.provider,
+    createdAt: now(),
+    resolvedAt: null
+  };
+  await repository.approvals.create(approval);
+
+  await repository.activity.create({
+    userId: user.id,
+    type: "lead.created",
+    label: `${lead.name} awaiting approval`,
+    source: lead.source,
+    status: "pending"
+  });
+
   try {
-    const sync = await syncHubspotLead(store, user, lead);
-    if (sync.provider === "hubspot") logActivity(store, { userId: user.id, type: "integration.synced", label: `${lead.name} synced to HubSpot`, source: "hubspot" });
+    const sync = await syncHubspotLead(null, user, lead);
+    if (sync.provider === "hubspot") {
+      await repository.activity.create({
+        userId: user.id,
+        type: "integration.synced",
+        label: `${lead.name} synced to HubSpot`,
+        source: "hubspot",
+        status: "success"
+      });
+    }
   } catch (error) {
     console.error("HubSpot sync:", error.message);
-    logActivity(store, { userId: user.id, type: "integration.error", label: `${lead.name} could not sync to HubSpot`, source: "hubspot", status: "error" });
+    await repository.activity.create({
+      userId: user.id,
+      type: "integration.error",
+      label: `${lead.name} could not sync to HubSpot`,
+      source: "hubspot",
+      status: "error"
+    });
   }
-  await writeStore(store);
+
   return { lead, approval };
 }
 
@@ -144,7 +183,8 @@ function systemStatus() {
 }
 
 function userRows(store, collection, userId) {
-  return store[collection].filter((item) => item.userId === userId);
+  // Keeping signature for backward compatibility, but we can query repository directly
+  return [];
 }
 
 module.exports = {

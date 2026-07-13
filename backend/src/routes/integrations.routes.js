@@ -33,7 +33,7 @@ async function integrationsRoutes(req, res, url, store, context) {
   // Connect integration
   const integrationMatch = req.method === "POST" && url.pathname.match(/^\/api\/integrations\/([^/]+)\/connect$/);
   if (integrationMatch) {
-    const user = getAuthUser(req, store);
+    const user = await getAuthUser(req, store);
     if (!enforceAuthGuards(req, res, user, url)) return true;
     await userController.connectIntegration(req, res, store, user, integrationMatch[1], { writeStore });
     return true;

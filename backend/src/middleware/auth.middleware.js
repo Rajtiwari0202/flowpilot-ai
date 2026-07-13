@@ -1,10 +1,12 @@
 const { verifyToken } = require("../services/jwt.service");
 const { send } = require("../utils/helpers");
 
-function getAuthUser(req, store) {
+async function getAuthUser(req, store) {
   const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   const payload = verifyToken(token);
-  return payload ? store.users.find((user) => user.id === payload.sub) : null;
+  if (!payload) return null;
+  const { repository } = require("../app");
+  return repository.users.getById(payload.sub);
 }
 
 function enforceAuthGuards(req, res, user, url) {

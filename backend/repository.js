@@ -426,6 +426,13 @@ function createLocalRepository({ seedStorePath, storePath }) {
     },
     authTokens: {
       async create(token) {
+        if (token.userId) {
+          const store = await readJson(storePath, seedStorePath);
+          const exists = store.users?.some(u => u.id === token.userId);
+          if (!exists) {
+            throw new Error(`Foreign key constraint violation: User with ID ${token.userId} does not exist in users table.`);
+          }
+        }
         await perform("authTokens", (coll) => coll.push(token));
         return token;
       },
@@ -885,13 +892,20 @@ function createPostgresRepository({ databaseUrl, seedStorePath }) {
     },
     authTokens: {
       async create(token) {
+        if (token.userId) {
+          await ensureConnection();
+          const userRows = await sql`SELECT id FROM public.users WHERE id = ${token.userId}`;
+          if (!userRows.length) {
+            throw new Error(`Foreign key constraint violation: User with ID ${token.userId} does not exist in users table.`);
+          }
+        }
         await ensureConnection();
         const th = token.tokenHash || token.token;
         await sql`
           INSERT INTO public.auth_tokens (
             id, user_id, kind, token_hash, expires_at, created_at, used_at
           ) VALUES (
-            ${token.id}, ${token.userId}, ${token.kind}, ${th}, ${token.expiresAt}, ${token.createdAt || new Date().toISOString()}, ${token.usedAt || null}
+            ${token.id}, ${token.userId || null}, ${token.kind}, ${th}, ${token.expiresAt}, ${token.createdAt || new Date().toISOString()}, ${token.usedAt || null}
           )
         `;
         return token;

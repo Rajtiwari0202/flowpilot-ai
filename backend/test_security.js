@@ -74,6 +74,16 @@ async function runSecurityTests() {
     assert.ok(!attackerCalled);
     assert.equal(attackerRes.statusCode, 403);
 
+    await repository.users.create({
+      id: "usr_123",
+      name: "Security Test User",
+      email: "security@test.com",
+      passwordHash: "dummy",
+      emailVerified: true,
+      plan: "free",
+      createdAt: new Date().toISOString()
+    });
+
     // ----------------------------------------------------
     // 2. JWT expiration validation
     // ----------------------------------------------------
@@ -114,15 +124,6 @@ async function runSecurityTests() {
     console.log("  4. Testing refresh token reuse and automatic revocation...");
     const rawRefreshToken = crypto.randomBytes(32).toString("hex");
     
-    await repository.users.create({
-      id: "usr_123",
-      name: "Security Test User",
-      email: "security@test.com",
-      passwordHash: "hash",
-      emailVerified: true,
-      plan: "free",
-      createdAt: new Date().toISOString()
-    });
 
     const tokenRecord = {
       id: `ref_${crypto.randomBytes(8).toString("hex")}`,

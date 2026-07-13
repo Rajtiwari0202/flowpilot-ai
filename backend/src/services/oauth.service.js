@@ -72,7 +72,7 @@ async function getGoogleAuthUrl() {
 
   await repository.authTokens.create({
     id: id("tok"),
-    userId: "anonymous",
+    userId: null,
     kind: "google_login_oauth_state",
     tokenHash: `${state}:${verifier}`,
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
@@ -288,6 +288,7 @@ async function processGoogleLogin(code, verifier = null) {
       email: profile.email.toLowerCase(),
       passwordHash: null,
       emailVerified: true,
+      googleId: profile.id || profile.sub || null,
       plan: "free",
       createdAt: now()
     };
@@ -296,6 +297,20 @@ async function processGoogleLogin(code, verifier = null) {
       userId: user.id,
       type: "user.created",
       label: "Account created via Google",
+      source: "google_oauth",
+      status: "success"
+    });
+  } else if (!user.googleId) {
+    await repository.users.update(user.id, {
+      googleId: profile.id || profile.sub || null,
+      emailVerified: true
+    });
+    user.googleId = profile.id || profile.sub;
+    user.emailVerified = true;
+    await repository.activity.create({
+      userId: user.id,
+      type: "user.updated",
+      label: "Linked Google account to existing user",
       source: "google_oauth",
       status: "success"
     });

@@ -701,9 +701,9 @@ function createPostgresRepository({ databaseUrl, seedStorePath }) {
             ${newId}, ${userId}, ${provider}, ${status}, ${encryptedCredentials}, ${connectedEmail}, ${nowStr}, ${nowStr}
           )
           ON CONFLICT (user_id, provider) DO UPDATE SET
-            status = COALESCE(${values.status}, public.integrations.status),
-            encrypted_credentials = CASE WHEN ${values.encryptedCredentials} IS NOT NULL THEN ${values.encryptedCredentials} ELSE public.integrations.encrypted_credentials END,
-            connected_email = COALESCE(${values.connectedEmail}, public.integrations.connected_email),
+            status = COALESCE(${values.status ?? null}::text, public.integrations.status),
+            encrypted_credentials = COALESCE(${values.encryptedCredentials ?? null}::text, public.integrations.encrypted_credentials),
+            connected_email = COALESCE(${values.connectedEmail ?? null}::text, public.integrations.connected_email),
             updated_at = EXCLUDED.updated_at
           RETURNING *
         `;

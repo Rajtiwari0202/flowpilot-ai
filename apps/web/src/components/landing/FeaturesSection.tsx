@@ -11,12 +11,12 @@ export function FeaturesSection() {
   ];
 
   return (
-    <section className="bg-slate-50 py-16 px-6 sm:px-12 max-w-6xl mx-auto border-t border-slate-200" id="features" aria-label="Product Features Detail">
+    <section className="bg-slate-50 dark:bg-slate-900/30 py-16 px-6 sm:px-12 max-w-6xl mx-auto border-t border-slate-200 dark:border-slate-800" id="features" aria-label="Product Features Detail">
       <div className="mx-auto max-w-3xl text-center mb-12">
-        <h2 className="text-3xl font-extrabold tracking-tight text-slate-900">
+        <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
           Built for modern operations.
         </h2>
-        <p className="mt-4 text-slate-500 text-sm max-w-xl mx-auto">
+        <p className="mt-4 text-slate-500 dark:text-slate-400 text-sm max-w-xl mx-auto">
           Robust, extensible, and fully integrated with your business email flow.
         </p>
       </div>
@@ -25,13 +25,13 @@ export function FeaturesSection() {
         {items.map((item) => {
           const Icon = item.icon;
           return (
-            <div className="flex gap-4 border border-slate-200 bg-white p-5 rounded-xl shadow-sm" key={item.title}>
-              <div className="size-10 shrink-0 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+            <div className="flex gap-4 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-5 rounded-xl shadow-sm" key={item.title}>
+              <div className="size-10 shrink-0 rounded-lg bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                 <Icon size={18} aria-hidden="true" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-900">{item.title}</h3>
-                <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">{item.desc}</p>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">{item.title}</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">{item.desc}</p>
               </div>
             </div>
           );

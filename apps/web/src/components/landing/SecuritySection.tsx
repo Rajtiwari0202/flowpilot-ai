@@ -9,12 +9,12 @@ export function SecuritySection() {
   ];
 
   return (
-    <section className="bg-slate-50 py-16 px-6 sm:px-12 max-w-6xl mx-auto border-t border-slate-200" id="security" aria-label="Security & Compliance">
+    <section className="bg-slate-50 dark:bg-slate-900/30 py-16 px-6 sm:px-12 max-w-6xl mx-auto border-t border-slate-200 dark:border-slate-800" id="security" aria-label="Security & Compliance">
       <div className="mx-auto max-w-3xl text-center mb-12">
-        <h2 className="text-3xl font-extrabold tracking-tight text-slate-900">
+        <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
           Built with security first.
         </h2>
-        <p className="mt-4 text-slate-500 text-sm max-w-xl mx-auto">
+        <p className="mt-4 text-slate-500 dark:text-slate-400 text-sm max-w-xl mx-auto">
           We protect user data using standard cryptographic keys and security models.
         </p>
       </div>
@@ -24,15 +24,15 @@ export function SecuritySection() {
           const Icon = item.icon;
           return (
             <article
-              className="border border-slate-200 bg-white p-6 rounded-xl shadow-sm flex flex-col justify-between"
+              className="border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 rounded-xl shadow-sm flex flex-col justify-between"
               key={item.title}
             >
               <div>
-                <div className="size-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                <div className="size-10 rounded-lg bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Icon size={18} aria-hidden="true" />
                 </div>
-                <h3 className="text-sm font-bold text-slate-900 mt-4">{item.title}</h3>
-                <p className="text-xs text-slate-500 mt-2 leading-relaxed">{item.desc}</p>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white mt-4">{item.title}</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">{item.desc}</p>
               </div>
             </article>
           );

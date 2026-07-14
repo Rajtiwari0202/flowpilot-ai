@@ -1,8 +1,19 @@
 @import "tailwindcss";
 
+html {
+  scroll-behavior: smooth;
+}
+
 :root {
   --background: #f8fafc;
   --foreground: #0f172a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0f172a;
+    --foreground: #f8fafc;
+  }
 }
 
 * {
@@ -115,4 +126,42 @@ button:disabled {
   background: #eff6ff;
   color: #1d4ed8;
   font-weight: 700;
+}
+
+@media (prefers-color-scheme: dark) {
+  .panel {
+    border-color: #334155;
+    background: #1e293b;
+  }
+  .input {
+    border-color: #475569;
+    background: #1e293b;
+    color: #f8fafc;
+  }
+  .secondary-button {
+    border-color: #475569;
+    background: #1e293b;
+    color: #cbd5e1;
+  }
+  .secondary-button:hover {
+    background: #334155;
+  }
+  .icon-button {
+    border-color: #475569;
+    background: #1e293b;
+    color: #cbd5e1;
+  }
+  .icon-button:hover {
+    background: #334155;
+  }
+  .nav-item {
+    color: #94a3b8;
+  }
+  .nav-item:hover {
+    background: #1e293b;
+  }
+  .nav-active {
+    background: #1e3a8a;
+    color: #60a5fa;
+  }
 }

@@ -36,11 +36,11 @@ export function Footer() {
         <div className="text-xs text-zinc-500">
           Support:{" "}
           <a
-            href="mailto:support@ace.ai"
+            href="mailto:rajtiwari16916@gmail.com"
             className="text-zinc-400 hover:text-white font-medium hover:underline transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-600"
-            aria-label="Email support at support@ace.ai"
+            aria-label="Email support at rajtiwari16916@gmail.com"
           >
-            support@ace.ai
+            rajtiwari16916@gmail.com
           </a>
         </div>
       </div>

@@ -71,8 +71,8 @@ export default function PrivacyPage() {
             <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-2">Contact</h2>
             <p>
               If you have any questions about this Privacy Policy, please contact us at:{" "}
-              <a href="mailto:support@ace.ai" className="text-orange-600 dark:text-orange-500 hover:underline">
-                support@ace.ai
+              <a href="mailto:rajtiwari16916@gmail.com" className="text-orange-600 dark:text-orange-500 hover:underline">
+                rajtiwari16916@gmail.com
               </a>
             </p>
           </section>

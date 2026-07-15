@@ -32,9 +32,11 @@ export function SettingsPage({ business, submit, loading, startSubscriptionCheck
           options={["agency", "e-commerce", "service_business", "startup", "solo_founder", "other"]}
         />
         <Select defaultValue={business.tone} label="Reply tone" name="tone" options={["professional", "friendly"]} />
-        <button className="primary-button sm:col-span-2 animate-none" disabled={loading} type="submit">
-          {loading ? "Saving..." : "Save settings"}
-        </button>
+        <div className="sm:col-span-2 flex justify-start">
+          <button className="primary-button h-10 px-4 py-2 w-full sm:w-fit sm:max-w-[220px] text-xs font-semibold animate-none" disabled={loading} type="submit">
+            {loading ? "Saving..." : "Save settings"}
+          </button>
+        </div>
       </form>
       <article className="panel p-5 bg-white dark:bg-[#0A0A0A] border-slate-200 dark:border-[#171717]">
         <h2 className="font-bold text-slate-900 dark:text-white">Production readiness</h2>

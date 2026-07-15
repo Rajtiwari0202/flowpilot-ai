@@ -21,7 +21,7 @@ export function ProblemSection() {
   ];
 
   return (
-    <section className="bg-black border-b border-[#171717] py-16 lg:py-24 px-6 lg:px-8" aria-label="Business Problems">
+    <section className="bg-black border-b border-[#171717] py-16 lg:py-24 px-6 lg:px-8" id="features" aria-label="Business Problems">
       <div className="mx-auto max-w-3xl text-center mb-12">
         <h2 className="text-3xl font-extrabold tracking-tight text-white">
           Manual follow-up kills revenue.

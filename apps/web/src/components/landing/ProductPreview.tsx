@@ -29,11 +29,11 @@ export function ProductPreview() {
       {/* Main Mock Dashboard Frame */}
       <div className="mx-auto max-w-5xl border border-[#171717] rounded-xl overflow-hidden shadow-2xl bg-[#0A0A0A] select-none">
         {/* Browser Header Bar */}
-        <div className="bg-zinc-950 px-4 py-3 border-b border-[#171717] flex items-center gap-2">
-          <div className="flex gap-1.5">
-            <span className="size-3 rounded-full bg-[#171717]"></span>
-            <span className="size-3 rounded-full bg-[#171717]"></span>
-            <span className="size-3 rounded-full bg-[#171717]"></span>
+        <div className="bg-zinc-950 px-4 py-3 border-b border-[#171717] flex items-center">
+          <div className="flex gap-2">
+            <span className="w-3 h-3 rounded-full bg-[#ff5f56] shadow-[0_0_6px_rgba(255,95,86,0.4)]"></span>
+            <span className="w-3 h-3 rounded-full bg-[#ffbd2e] shadow-[0_0_6px_rgba(255,189,46,0.4)]"></span>
+            <span className="w-3 h-3 rounded-full bg-[#27c93f] shadow-[0_0_6px_rgba(39,201,63,0.4)]"></span>
           </div>
           <div className="mx-auto bg-black border border-[#171717] rounded-md text-[11px] text-zinc-500 py-1 px-16 text-center select-none truncate max-w-sm">
             https://ace.ai/dashboard

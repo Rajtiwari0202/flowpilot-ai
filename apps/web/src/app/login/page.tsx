@@ -14,12 +14,17 @@ export default function LoginPage() {
   const [resetPasswordToken, setResetPasswordToken] = useState("");
 
   useEffect(() => {
+    const stored = window.localStorage.getItem("flowpilot_token");
+    if (stored) {
+      router.push("/dashboard");
+      return;
+    }
     const params = new URLSearchParams(window.location.search);
     const token = params.get("reset-password");
     if (token) {
       setResetPasswordToken(token);
     }
-  }, []);
+  }, [router]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -33,7 +38,7 @@ export default function LoginPage() {
       });
       window.sessionStorage.setItem("flowpilot_skip_sandbox", "1");
       window.localStorage.setItem("flowpilot_token", data.token);
-      router.push("/");
+      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed");
     } finally {
@@ -94,7 +99,7 @@ export default function LoginPage() {
         body: "{}",
       });
       window.localStorage.setItem("flowpilot_token", data.token);
-      router.push("/");
+      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not launch sandbox workspace");
     } finally {

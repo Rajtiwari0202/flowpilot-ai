@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { LogOut, RefreshCw } from "lucide-react";
+import { LogOut, RefreshCw, LayoutDashboard, Mail, Workflow, ShieldCheck, FileText, PlugZap, Activity, Settings } from "lucide-react";
 import { api } from "@/lib/api";
 import { Brand, Banner, BusinessSetup } from "@/components/AuthComponents";
 import { LandingPage } from "@/components/LandingPage";
@@ -17,14 +17,14 @@ import { ActivityPage } from "./dashboard/ActivityPage";
 import { SettingsPage } from "./dashboard/SettingsPage";
 
 const navItems = [
-  ["dashboard", "Dashboard"],
-  ["automations", "Automations"],
-  ["leads", "Leads"],
-  ["approvals", "Approvals"],
-  ["templates", "Templates"],
-  ["integrations", "Integrations"],
-  ["activity", "Activity"],
-  ["settings", "Settings"],
+  ["dashboard", "Dashboard", LayoutDashboard],
+  ["automations", "Automations", Workflow],
+  ["leads", "Leads", Mail],
+  ["approvals", "Approvals", ShieldCheck],
+  ["templates", "Templates", FileText],
+  ["integrations", "Integrations", PlugZap],
+  ["activity", "Activity", Activity],
+  ["settings", "Settings", Settings],
 ] as const;
 
 const emptyMetrics = { activeAutomations: 0, leadsProcessedToday: 0, pendingApprovals: 0, errors: 0, timeSavedMinutesThisWeek: 0, successRate: 100 };
@@ -279,20 +279,25 @@ export default function Home() {
       <div className="flex min-h-[calc(100vh-4rem)]">
         <aside className="w-56 shrink-0 border-r border-slate-200 dark:border-[#171717] bg-white dark:bg-[#0A0A0A] p-3">
           <nav className="space-y-1">
-            {visibleNavItems.map(([key, label]) => (
+            {visibleNavItems.map(([key, label, Icon]) => (
               <button className={`nav-item ${page === key ? "nav-active" : ""}`} key={key} onClick={() => setPage(key)} type="button">
-                {label}
+                <Icon size={15} />
+                <span>{label}</span>
               </button>
             ))}
           </nav>
           <div className="mt-8 border-t border-slate-200 dark:border-[#171717] pt-4">
-            <div className="rounded-md bg-orange-50 dark:bg-orange-950/20 p-3 text-xs text-orange-900 dark:text-orange-400">
-              <div className="mb-1 font-bold">{isSandbox ? "Sandbox workspace" : "Free plan"}</div>
-              {isSandbox ? "Safe sample data for visitors." : "Personal workspace is active."}
+            <div className="rounded-md bg-slate-100 dark:bg-[#0E0E0E] border border-slate-200/60 dark:border-[#1C1C1C] p-2.5 text-[11px]">
+              <div className="font-bold uppercase tracking-wider text-[9px] text-zinc-500 dark:text-zinc-500 mb-0.5">
+                {isSandbox ? "Sandbox Mode" : "Free Plan"}
+              </div>
+              <div className="font-semibold text-slate-800 dark:text-zinc-200 leading-normal">
+                {isSandbox ? "Demo Workspace" : "Personal Workspace"}
+              </div>
             </div>
-            {!isSandbox && <div className="mt-3 text-xs text-slate-500 dark:text-zinc-500">AI drafts: {systemStatus?.services.ai.provider || "checking"}</div>}
-            {isSandbox && <button className="secondary-button mt-3 w-full" disabled={loading} onClick={resetSandbox} type="button"><RefreshCw size={14} />Reset sandbox</button>}
-            {isSandbox && <button className="mt-3 w-full text-left text-xs font-semibold text-orange-600 dark:text-orange-500" onClick={() => { window.sessionStorage.setItem("flowpilot_skip_sandbox", "1"); logout(); }} type="button">Create your own workspace</button>}
+            {!isSandbox && <div className="mt-3 text-[11px] text-slate-500 dark:text-zinc-500">AI drafts: {systemStatus?.services.ai.provider || "checking"}</div>}
+            {isSandbox && <button className="secondary-button mt-3 w-full text-xs py-1.5 px-2" disabled={loading} onClick={resetSandbox} type="button"><RefreshCw size={12} />Reset sandbox</button>}
+            {isSandbox && <button className="mt-3 w-full text-left text-[11px] font-semibold text-orange-600 dark:text-orange-500 hover:underline" onClick={() => { window.sessionStorage.setItem("flowpilot_skip_sandbox", "1"); logout(); }} type="button">Create your own workspace</button>}
           </div>
         </aside>
         <section className="min-w-0 flex-1 p-7">

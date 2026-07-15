@@ -51,11 +51,11 @@ async function queueAccountEmail(user, kind, token) {
 }
 
 async function deliverAccountEmail(row) {
-  let subject = "Notification from FlowPilot";
+  let subject = "Notification from ACE";
   if (row.kind === "verify_email") {
-    subject = "Verify your FlowPilot email";
+    subject = "Verify your ACE email";
   } else if (row.kind === "reset_password") {
-    subject = "Reset your FlowPilot password";
+    subject = "Reset your ACE password";
   } else if (row.kind === "approval_reminder") {
     subject = "Pending Approvals Reminder";
   }

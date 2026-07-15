@@ -10,7 +10,7 @@ import { Footer } from "./landing/Footer";
 
 export function LandingPage() {
   return (
-    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen font-sans">
+    <div className="bg-black text-white min-h-screen font-sans">
       <Navbar />
       <Hero />
       <TrustBar />

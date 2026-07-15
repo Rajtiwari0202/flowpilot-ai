@@ -15,8 +15,8 @@ section[id] {
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0f172a;
-    --foreground: #f8fafc;
+    --background: #000000;
+    --foreground: #ffffff;
   }
 }
 
@@ -59,8 +59,8 @@ button:disabled {
 }
 
 .input:focus {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgb(37 99 235 / 12%);
+  border-color: #ea580c;
+  box-shadow: 0 0 0 3px rgb(234 88 12 / 12%);
 }
 
 .primary-button,
@@ -77,14 +77,14 @@ button:disabled {
 }
 
 .primary-button {
-  border: 1px solid #2563eb;
-  background: #2563eb;
+  border: 1px solid #ea580c;
+  background: #ea580c;
   padding: 10px 14px;
   color: white;
 }
 
 .primary-button:hover {
-  background: #1d4ed8;
+  background: #c2410c;
 }
 
 .secondary-button {
@@ -127,45 +127,45 @@ button:disabled {
 }
 
 .nav-active {
-  background: #eff6ff;
-  color: #1d4ed8;
+  background: #fff7ed;
+  color: #c2410c;
   font-weight: 700;
 }
 
 @media (prefers-color-scheme: dark) {
   .panel {
-    border-color: #334155;
-    background: #1e293b;
+    border-color: #171717;
+    background: #0A0A0A;
   }
   .input {
-    border-color: #475569;
-    background: #1e293b;
-    color: #f8fafc;
+    border-color: #171717;
+    background: #0A0A0A;
+    color: #ffffff;
   }
   .secondary-button {
-    border-color: #475569;
-    background: #1e293b;
-    color: #cbd5e1;
+    border-color: #171717;
+    background: #0A0A0A;
+    color: #a1a1aa;
   }
   .secondary-button:hover {
-    background: #334155;
+    background: #1f1f1f;
   }
   .icon-button {
-    border-color: #475569;
-    background: #1e293b;
-    color: #cbd5e1;
+    border-color: #171717;
+    background: #0A0A0A;
+    color: #a1a1aa;
   }
   .icon-button:hover {
-    background: #334155;
+    background: #1f1f1f;
   }
   .nav-item {
-    color: #94a3b8;
+    color: #71717a;
   }
   .nav-item:hover {
-    background: #1e293b;
+    background: #0a0a0a;
   }
   .nav-active {
-    background: #1e3a8a;
-    color: #60a5fa;
+    background: #2c1b12;
+    color: #f97316;
   }
 }

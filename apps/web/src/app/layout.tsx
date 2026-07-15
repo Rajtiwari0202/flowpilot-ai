@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FlowPilot AI",
-  description: "AI-powered workflow automation for growing businesses.",
+  title: "ACE — Autonomous Chief Executor",
+  description: "Your Autonomous Chief Executor for automating operational workflows.",
 };
 
 export default function RootLayout({

@@ -1,32 +1,32 @@
 import { EyeOff, Clock, Layers } from "lucide-react";
-import { tokens } from "../../design-system/tokens";
+import { tokens } from "@/design-system";
 
 export function ProblemSection() {
   const problems = [
     {
-      title: "Leads get lost",
-      description: "Important conversations disappear in inboxes.",
+      title: "Lost Leads",
+      description: "Critical incoming messages disappear into cluttered inboxes before they are classified or assigned.",
       icon: EyeOff,
     },
     {
-      title: "Teams respond too slowly",
-      description: "Customers wait while teams coordinate manually.",
+      title: "Slow Response Times",
+      description: "High-value inquiries sit unanswered for hours while managers coordinate schedules and drafts manually.",
       icon: Clock,
     },
     {
-      title: "Manual follow-ups waste time",
-      description: "Email, approvals, CRM updates, and follow-ups happen in different places.",
+      title: "Scattered Operations",
+      description: "Drafting follow-ups, validating details, requesting approvals, and updating CRMs are disconnected.",
       icon: Layers,
     },
   ];
 
   return (
-    <section className={`${tokens.colors.bg} border-b ${tokens.colors.border} py-16 lg:py-24 px-6 lg:px-8`} aria-label="Business Problems">
+    <section className="bg-black border-b border-[#171717] py-16 lg:py-24 px-6 lg:px-8" aria-label="Business Problems">
       <div className="mx-auto max-w-3xl text-center mb-12">
-        <h2 className={tokens.typography.h2}>
+        <h2 className="text-3xl font-extrabold tracking-tight text-white">
           Manual follow-up kills revenue.
         </h2>
-        <p className="mt-4 text-slate-500 dark:text-slate-400 text-sm max-w-xl mx-auto">
+        <p className="mt-4 text-zinc-400 text-sm max-w-xl mx-auto">
           Operational latency and missed messages reduce user acquisition and customer retention.
         </p>
       </div>
@@ -36,14 +36,14 @@ export function ProblemSection() {
           const Icon = item.icon;
           return (
             <article
-              className={`border ${tokens.colors.border} ${tokens.colors.card} p-6 ${tokens.radius.card} ${tokens.shadow.sm}`}
+              className="border border-[#171717] bg-[#0A0A0A] p-6 rounded-xl shadow-sm"
               key={item.title}
             >
-              <div className="size-10 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-6">
+              <div className="size-10 rounded-lg bg-orange-950/20 text-orange-500 flex items-center justify-center mb-6 border border-orange-900/30">
                 <Icon size={18} aria-hidden="true" />
               </div>
-              <h3 className={tokens.typography.h3}>{item.title}</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">{item.description}</p>
+              <h3 className="text-base font-bold text-white">{item.title}</h3>
+              <p className="text-xs text-zinc-450 mt-2 leading-relaxed">{item.description}</p>
             </article>
           );
         })}

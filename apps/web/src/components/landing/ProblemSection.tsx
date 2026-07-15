@@ -1,4 +1,5 @@
-import { EyeOff, AlertTriangle, Layers } from "lucide-react";
+import { EyeOff, Clock, Layers } from "lucide-react";
+import { tokens } from "../../design-system/tokens";
 
 export function ProblemSection() {
   const problems = [
@@ -8,21 +9,21 @@ export function ProblemSection() {
       icon: EyeOff,
     },
     {
-      title: "Teams respond slowly",
+      title: "Teams respond too slowly",
       description: "Customers wait while teams coordinate manually.",
-      icon: AlertTriangle,
+      icon: Clock,
     },
     {
-      title: "Work is scattered",
+      title: "Manual follow-ups waste time",
       description: "Email, approvals, CRM updates, and follow-ups happen in different places.",
       icon: Layers,
     },
   ];
 
   return (
-    <section className="bg-slate-50 dark:bg-slate-900/30 py-16 px-6 sm:px-12 max-w-6xl mx-auto border-t border-slate-200 dark:border-slate-800" aria-label="Business Problems">
+    <section className={`${tokens.colors.bg} border-b ${tokens.colors.border} py-16 lg:py-24 px-6 lg:px-8`} aria-label="Business Problems">
       <div className="mx-auto max-w-3xl text-center mb-12">
-        <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+        <h2 className={tokens.typography.h2}>
           Manual follow-up kills revenue.
         </h2>
         <p className="mt-4 text-slate-500 dark:text-slate-400 text-sm max-w-xl mx-auto">
@@ -30,18 +31,18 @@ export function ProblemSection() {
         </p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-3">
+      <div className="mx-auto max-w-6xl grid gap-6 md:grid-cols-3">
         {problems.map((item) => {
           const Icon = item.icon;
           return (
             <article
-              className="border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 rounded-xl shadow-sm"
+              className={`border ${tokens.colors.border} ${tokens.colors.card} p-6 ${tokens.radius.card} ${tokens.shadow.sm}`}
               key={item.title}
             >
-              <div className="size-10 rounded-lg bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+              <div className="size-10 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-6">
                 <Icon size={18} aria-hidden="true" />
               </div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white mt-4">{item.title}</h3>
+              <h3 className={tokens.typography.h3}>{item.title}</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">{item.description}</p>
             </article>
           );

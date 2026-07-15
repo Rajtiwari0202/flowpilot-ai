@@ -1,22 +1,24 @@
 import { Navbar } from "./landing/Navbar";
 import { Hero } from "./landing/Hero";
+import { TrustBar } from "./landing/TrustBar";
 import { ProblemSection } from "./landing/ProblemSection";
 import { SolutionSection } from "./landing/SolutionSection";
-import { FeaturesSection } from "./landing/FeaturesSection";
 import { ProductPreview } from "./landing/ProductPreview";
 import { SecuritySection } from "./landing/SecuritySection";
+import { CTASection } from "./landing/CTASection";
 import { Footer } from "./landing/Footer";
 
 export function LandingPage() {
   return (
-    <div className="bg-slate-50 min-h-screen font-sans">
+    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen font-sans">
       <Navbar />
       <Hero />
+      <TrustBar />
       <ProblemSection />
       <SolutionSection />
-      <FeaturesSection />
       <ProductPreview />
       <SecuritySection />
+      <CTASection />
       <Footer />
     </div>
   );

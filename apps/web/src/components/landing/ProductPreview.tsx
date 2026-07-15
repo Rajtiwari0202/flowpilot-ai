@@ -1,26 +1,34 @@
-import { LayoutDashboard, Workflow, Mail, ShieldCheck, FileText, PlugZap, Activity, Settings, RefreshCw, LogOut, CheckCircle2, Clock3 } from "lucide-react";
+"use client";
+
+import { LayoutDashboard, Mail, Workflow, ShieldCheck, PlugZap, Settings, RefreshCw, LogOut, CheckCircle2 } from "lucide-react";
+import { tokens } from "../../design-system/tokens";
 
 export function ProductPreview() {
   const mockMetrics = [
-    { label: "Active automations", value: 3, icon: Workflow },
-    { label: "Leads processed", value: 12, icon: Mail },
-    { label: "Pending approvals", value: 2, icon: Clock3 },
-    { label: "Success rate", value: "100%", icon: CheckCircle2 },
+    { label: "New Leads", value: 12, icon: Mail },
+    { label: "Pending Approvals", value: 2, icon: ShieldCheck },
+    { label: "Active Workflows", value: 3, icon: Workflow },
+    { label: "Emails Sent", value: 45, icon: CheckCircle2 },
   ];
 
   const mockActivities = [
-    { label: "Lead Sarah Chen qualified", source: "workflow engine", status: "success", time: "5m ago" },
-    { label: "AI draft generated for Sarah Chen", source: "openai gpt-4", status: "success", time: "5m ago" },
-    { label: "Gmail inbox sync completed", source: "gmail system", status: "success", time: "12m ago" },
+    { title: "Sarah Chen", subtitle: "New Lead Captured", time: "2m ago", status: "New" },
+    { title: "Approval Requested", subtitle: "AI Response Draft Ready", time: "5m ago", status: "Pending" },
+    { title: "CRM Updated", subtitle: "Lead Synced to Database", time: "8m ago", status: "Success" },
   ];
 
   return (
-    <section className="bg-slate-50 dark:bg-slate-900/30 py-10 px-6 sm:px-12 max-w-6xl mx-auto border-t border-slate-200 dark:border-slate-800" id="product-preview" aria-label="Product Preview">
-      <h2 className="text-center text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-8">
-        Take a look inside FlowPilot AI
-      </h2>
-      <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-2xl bg-white dark:bg-slate-950 select-none">
-        {/* Mock Browser Title Bar */}
+    <section className={`${tokens.colors.bg} border-b ${tokens.colors.border} py-16 lg:py-24 px-6 lg:px-8`} id="product-preview" aria-label="Product Showcase">
+      <div className="mx-auto max-w-3xl text-center mb-12">
+        <h2 className={tokens.typography.h2}>The operational workspace.</h2>
+        <p className="mt-4 text-slate-500 dark:text-slate-400 text-sm max-w-xl mx-auto">
+          An integrated system to sync communication pipelines, review automation runs, and manage lead records.
+        </p>
+      </div>
+
+      {/* Main Mock Dashboard Frame */}
+      <div className={`mx-auto max-w-5xl border ${tokens.colors.border} rounded-xl overflow-hidden ${tokens.shadow.xxl} bg-white dark:bg-slate-950 select-none`}>
+        {/* Browser Header Bar */}
         <div className="bg-slate-100 dark:bg-slate-900 px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2">
           <div className="flex gap-1.5">
             <span className="size-3 rounded-full bg-slate-300 dark:bg-slate-700"></span>
@@ -34,12 +42,10 @@ export function ProductPreview() {
 
         {/* Dashboard Shell */}
         <div className="bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col min-h-[500px]">
-          {/* Header */}
+          {/* Top Bar Header */}
           <header className="flex h-14 items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-6">
             <div className="flex items-center gap-2">
-              <div className="grid size-7 place-items-center rounded-lg bg-blue-600 text-white font-bold text-xs">
-                FP
-              </div>
+              <div className="grid size-7 place-items-center rounded-lg bg-blue-600 text-white font-bold text-xs">FP</div>
               <span className="text-xs font-bold text-slate-800 dark:text-slate-100">FlowPilot AI</span>
             </div>
             <div className="flex items-center gap-3">
@@ -48,36 +54,29 @@ export function ProductPreview() {
                 <div className="text-[9px] text-slate-500 dark:text-slate-400">rajtiwari16916@gmail.com</div>
               </div>
               <div className="size-8 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-center text-slate-400">
-                <LogOut size={13} />
+                <LogOut size={12} />
               </div>
             </div>
           </header>
 
-          {/* Main Layout Area */}
           <div className="flex flex-1">
-            {/* Sidebar */}
+            {/* Navigation Sidebar */}
             <aside className="w-44 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-2.5 hidden sm:block">
               <nav className="space-y-0.5">
-                <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400 font-bold text-xs">
-                  <LayoutDashboard size={13} /> Overview
-                </div>
-                <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-slate-500 dark:text-slate-450 text-xs">
-                  <Workflow size={13} /> Automations
+                <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-450 font-bold text-xs">
+                  <LayoutDashboard size={13} /> Dashboard
                 </div>
                 <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-slate-500 dark:text-slate-450 text-xs">
                   <Mail size={13} /> Leads
                 </div>
                 <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-slate-500 dark:text-slate-450 text-xs">
+                  <Workflow size={13} /> Workflows
+                </div>
+                <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-slate-500 dark:text-slate-450 text-xs">
                   <ShieldCheck size={13} /> Approvals
                 </div>
                 <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-slate-500 dark:text-slate-450 text-xs">
-                  <FileText size={13} /> Templates
-                </div>
-                <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-slate-500 dark:text-slate-450 text-xs">
                   <PlugZap size={13} /> Integrations
-                </div>
-                <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-slate-500 dark:text-slate-450 text-xs">
-                  <Activity size={13} /> Activity
                 </div>
                 <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-slate-500 dark:text-slate-450 text-xs">
                   <Settings size={13} /> Settings
@@ -85,19 +84,19 @@ export function ProductPreview() {
               </nav>
             </aside>
 
-            {/* Dashboard Content */}
+            {/* Dashboard Content Container */}
             <main className="flex-1 p-5 sm:p-6">
-              <div className="mb-4 flex items-center justify-between">
+              <div className="mb-5 flex items-center justify-between">
                 <div>
                   <p className="text-[10px] font-bold uppercase text-blue-600 dark:text-blue-400">dashboard</p>
-                  <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">Operations overview</h3>
+                  <h3 className="text-lg font-bold text-slate-850 dark:text-slate-100">Overview Panel</h3>
                 </div>
                 <div className="size-8 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 flex items-center justify-center text-slate-400 dark:text-slate-500">
                   <RefreshCw size={14} />
                 </div>
               </div>
 
-              {/* Metrics Grid */}
+              {/* Metrics Row */}
               <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
                 {mockMetrics.map((card) => {
                   const Icon = card.icon;
@@ -107,44 +106,53 @@ export function ProductPreview() {
                         <span className="text-[9px] font-bold uppercase text-slate-500 dark:text-slate-450">{card.label}</span>
                         <Icon className="text-blue-600 dark:text-blue-400" size={13} />
                       </div>
-                      <div className="text-lg font-bold text-slate-800 dark:text-slate-155">{card.value}</div>
+                      <div className="text-lg font-bold text-slate-800 dark:text-slate-150">{card.value}</div>
                     </article>
                   );
                 })}
               </div>
 
-              {/* Feed & Quick Actions */}
-              <div className="mt-4 grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-                {/* Recent Activity Card */}
+              {/* Activity & Workflows Details Grid */}
+              <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+                {/* Activity Feed */}
                 <article className="border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 rounded-lg p-4 shadow-sm">
-                  <h4 className="font-bold text-sm text-slate-800 dark:text-slate-100 mb-3">Recent activity</h4>
+                  <h4 className="font-bold text-xs text-slate-800 dark:text-slate-100 mb-3">Activity Feed</h4>
                   <div className="space-y-2">
                     {mockActivities.map((row) => (
-                      <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-900 pb-2 text-[11px]" key={row.label}>
+                      <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-900 pb-2 text-[10px]" key={row.title}>
                         <div>
-                          <div className="font-semibold text-slate-700 dark:text-slate-300">{row.label}</div>
-                          <div className="text-[9px] text-slate-400 dark:text-slate-500">{row.source} - {row.time}</div>
+                          <div className="font-bold text-slate-700 dark:text-slate-300">{row.title}</div>
+                          <div className="text-slate-400 dark:text-slate-500">{row.subtitle}</div>
                         </div>
-                        <span className="rounded-full bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 text-[9px] font-bold">
-                          {row.status}
-                        </span>
+                        <div className="text-right">
+                          <div className="text-slate-400 dark:text-slate-500">{row.time}</div>
+                          <span className="text-[8px] uppercase tracking-wider font-extrabold text-blue-600 dark:text-blue-400">{row.status}</span>
+                        </div>
                       </div>
                     ))}
                   </div>
                 </article>
 
-                {/* Quick Actions Panel */}
+                {/* Workflow Card Mock */}
                 <article className="border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 rounded-lg p-4 shadow-sm flex flex-col justify-between">
                   <div>
-                    <h4 className="font-bold text-sm text-slate-800 dark:text-slate-100">Quick actions</h4>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-450 mt-1">Move a real lead through the local MVP.</p>
-                  </div>
-                  <div className="space-y-1.5 mt-4">
-                    <div className="border border-slate-200 dark:border-slate-800 rounded-md p-2 flex items-center gap-2 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-900 transition cursor-pointer">
-                      <span className="text-blue-600 dark:text-blue-400 font-bold">+</span> Capture a test lead
+                    <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2 mb-3">
+                      <h4 className="font-bold text-xs text-slate-800 dark:text-slate-100">Workflow Details</h4>
+                      <span className="rounded bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-400 px-1.5 py-0.5 text-[8px] font-bold">Active</span>
                     </div>
-                    <div className="border border-slate-200 dark:border-slate-800 rounded-md p-2 flex items-center gap-2 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-900 transition cursor-pointer">
-                      <span className="text-blue-600 dark:text-blue-400 font-bold">✓</span> Review approvals (2)
+                    <div className="space-y-2 text-[10px]">
+                      <div>
+                        <span className="text-slate-400 dark:text-slate-550 block uppercase text-[8px] font-bold">Name</span>
+                        <span className="font-semibold text-slate-700 dark:text-slate-350">Lead Follow-Up Pipeline</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 dark:text-slate-550 block uppercase text-[8px] font-bold">Trigger</span>
+                        <span className="font-semibold text-slate-700 dark:text-slate-350">New Lead Captured</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 dark:text-slate-550 block uppercase text-[8px] font-bold">Last Run</span>
+                        <span className="font-semibold text-slate-700 dark:text-slate-350">2 minutes ago</span>
+                      </div>
                     </div>
                   </div>
                 </article>

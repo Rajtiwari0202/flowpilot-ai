@@ -21,7 +21,9 @@ async function getAuthUser(req, store) {
     return null;
   }
   const { repository } = require("../app");
-  return repository.users.getById(payload.sub);
+  const user = await repository.users.getById(payload.sub);
+  req.user = user;
+  return user;
 }
 
 function enforceAuthGuards(req, res, user, url) {

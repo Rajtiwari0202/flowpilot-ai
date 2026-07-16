@@ -24,7 +24,11 @@ function validateEnvironment() {
   if (!REAL_EMAIL_SEND_DISABLED && (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL)) warnings.push("Resend account-email delivery is not configured");
   if (APP_ORIGIN.includes("localhost")) warnings.push("APP_ORIGIN still points to localhost");
   if (API_PUBLIC_URL.includes("localhost")) warnings.push("API_PUBLIC_URL still points to localhost");
-  if (process.env.NODE_ENV === "production" && warnings.length) throw new Error(`Production environment invalid: ${warnings.join("; ")}`);
+  if (process.env.NODE_ENV === "production" && warnings.length) {
+    for (const warning of warnings) {
+      structuredLog("error", "environment.invalid_production_warning", { warning });
+    }
+  }
   for (const warning of warnings) structuredLog("warn", "environment.warning", { warning });
 }
 

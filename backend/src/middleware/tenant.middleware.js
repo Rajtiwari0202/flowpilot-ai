@@ -6,7 +6,7 @@ function requireWorkspaceRole(allowedRoles = ["owner", "admin", "member", "viewe
     const userId = req.user?.id;
     
     // Scopes workspaceId from request headers, query parameters, or body
-    const workspaceId = req.headers["x-workspace-id"] || req.query.workspaceId || req.body.workspaceId;
+    const workspaceId = req.headers["x-workspace-id"] || req.query?.workspaceId || req.body?.workspaceId;
 
     if (!userId) {
       return send(res, 401, { error: "Unauthorized: Missing user authentication session context" });

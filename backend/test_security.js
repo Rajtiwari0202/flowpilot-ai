@@ -235,6 +235,49 @@ async function runSecurityTests() {
 
     process.env.GOOGLE_CALLBACK_URL = prevCallbackUrl;
 
+    // ----------------------------------------------------
+    // 7. Tenant Middleware Crash Resilience
+    // ----------------------------------------------------
+    console.log("  7. Testing tenant middleware crash resilience...");
+    const { requireWorkspaceRole } = require("./src/middleware/tenant.middleware");
+    const middleware = requireWorkspaceRole();
+
+    const origGetByWorkspaceAndUser = repository.workspaceMembers.getByWorkspaceAndUser;
+    repository.workspaceMembers.getByWorkspaceAndUser = async () => ({ role: "owner" });
+
+    // GET request (no body)
+    const mockGetReq = {
+      headers: { "x-workspace-id": "biz_123" },
+      user: { id: "usr_123" },
+      query: {},
+      body: undefined
+    };
+    let middlewareNextCalled = false;
+    await middleware(mockGetReq, {
+      writeHead() {},
+      end() {}
+    }, () => { middlewareNextCalled = true; });
+    assert.ok(middlewareNextCalled);
+
+    repository.workspaceMembers.getByWorkspaceAndUser = origGetByWorkspaceAndUser;
+
+    // OPTIONS request (missing workspace headers)
+    const mockOptionsReq = {
+      headers: {},
+      user: { id: "usr_123" },
+      query: undefined,
+      body: undefined
+    };
+    let optionsNextCalled = false;
+    const mockResEmpty = {
+      statusCode: 200,
+      writeHead(s) { this.statusCode = s; },
+      end() {}
+    };
+    await middleware(mockOptionsReq, mockResEmpty, () => { optionsNextCalled = true; });
+    assert.equal(optionsNextCalled, false);
+    assert.equal(mockResEmpty.statusCode, 400);
+
     console.log("✅ Zero-Trust Security Validation Test Suite Passed!");
   } finally {
     fs.rmSync(testStorePath, { force: true });

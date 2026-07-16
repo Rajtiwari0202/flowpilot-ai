@@ -21,7 +21,7 @@ const { sendWhatsAppFollowUp } = require("../services/whatsapp.service");
 // Safely scope active workspace context
 async function getWorkspaceId(req, user) {
   if (req.workspaceId) return req.workspaceId;
-  const workspaceId = req.headers["x-workspace-id"] || req.query.workspaceId || req.body.workspaceId;
+  const workspaceId = req.headers["x-workspace-id"] || req.query?.workspaceId || req.body?.workspaceId;
   if (workspaceId) return workspaceId;
   const { repository } = require("../app");
   const business = await repository.businesses.getByUserId(user?.id);

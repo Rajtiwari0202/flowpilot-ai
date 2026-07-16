@@ -2,9 +2,24 @@ const { verifyToken } = require("../services/jwt.service");
 const { send } = require("../utils/helpers");
 
 async function getAuthUser(req, store) {
-  const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  const authHeader = req.headers.authorization || "";
+  const hasAuthorizationHeader = !!authHeader;
+  const authorizationPrefix = authHeader.split(" ")[0] || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const tokenPresent = !!token;
+
+  console.log("JWT Auth Middleware Diagnostics:", JSON.stringify({
+    hasAuthorizationHeader,
+    authorizationPrefix,
+    tokenPresent,
+    tokenLength: token.length
+  }));
+
   const payload = verifyToken(token);
-  if (!payload) return null;
+  if (!payload) {
+    console.log("JWT Verify Failure: payload is null for token:", token);
+    return null;
+  }
   const { repository } = require("../app");
   return repository.users.getById(payload.sub);
 }

@@ -1,6 +1,6 @@
 const { createRepository } = require("../repository");
 const { SEED_STORE_PATH, STORE_PATH, PUBLIC_SANDBOX_ENABLED, BILLING_DISABLED, APP_ORIGIN } = require("./config/env");
-const { structuredLog } = require("./utils/logger");
+const { structuredLog, loggerStorage } = require("./utils/logger");
 const { enforceRateLimit } = require("./middleware/rateLimit.middleware");
 const { enforceCsrfGuard } = require("./middleware/csrf.middleware");
 const { clientIp, id, send, readRawBody } = require("./utils/helpers");
@@ -49,43 +49,45 @@ async function handleRequest(req, res) {
     })
   );
 
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-    if (enforceRateLimit(req, res, url)) return;
-
-    let csrfPassed = false;
-    enforceCsrfGuard(req, res, () => { csrfPassed = true; });
-    if (!csrfPassed) return;
-
-    const store = await readStore();
-
-    const { logActivity, createLeadApproval } = require("./services/user.service");
-    const { sendGmailFollowUp } = require("./services/gmail.service");
-
-    await mainRouter(req, res, store, {
-      PUBLIC_SANDBOX_ENABLED,
-      BILLING_DISABLED,
-      APP_ORIGIN,
-      writeStore,
-      readRawBody,
-      logActivity,
-      createLeadApproval,
-      sendGmailFollowUp,
-    });
-  } catch (error) {
-    structuredLog("error", "http.error", {
-      requestId: res.requestId,
-      message: error.message,
-      stack: process.env.NODE_ENV === "production" ? undefined : error.stack
-    });
+  return loggerStorage.run(res.requestId, async () => {
     try {
-      const { captureException } = require("./services/observability.service");
-      captureException(error, { requestId: res.requestId });
-    } catch (obsErr) {
-      // Ignore
+      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      if (enforceRateLimit(req, res, url)) return;
+
+      let csrfPassed = false;
+      enforceCsrfGuard(req, res, () => { csrfPassed = true; });
+      if (!csrfPassed) return;
+
+      const store = await readStore();
+
+      const { logActivity, createLeadApproval } = require("./services/user.service");
+      const { sendGmailFollowUp } = require("./services/gmail.service");
+
+      await mainRouter(req, res, store, {
+        PUBLIC_SANDBOX_ENABLED,
+        BILLING_DISABLED,
+        APP_ORIGIN,
+        writeStore,
+        readRawBody,
+        logActivity,
+        createLeadApproval,
+        sendGmailFollowUp,
+      });
+    } catch (error) {
+      structuredLog("error", "http.error", {
+        requestId: res.requestId,
+        message: error.message,
+        stack: process.env.NODE_ENV === "production" ? undefined : error.stack
+      });
+      try {
+        const { captureException } = require("./services/observability.service");
+        captureException(error, { requestId: res.requestId });
+      } catch (obsErr) {
+        // Ignore
+      }
+      send(res, error.status || 500, { error: error.status ? error.message : "internal server error" });
     }
-    send(res, error.status || 500, { error: error.status ? error.message : "internal server error" });
-  }
+  });
 }
 
 module.exports = {

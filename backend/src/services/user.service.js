@@ -19,14 +19,20 @@ function logActivity(store, item) {
   return repository.activity.create(item);
 }
 
-async function dashboardFor(user) {
+async function dashboardFor(user, workspaceId) {
   const { repository } = require("../app");
+  if (!workspaceId) {
+    const business = await repository.businesses.getByUserId(user.id);
+    workspaceId = business?.id;
+  }
+  if (!workspaceId) throw new Error("Workspace context required");
+
   const business = await repository.businesses.getByUserId(user.id);
-  const workflows = await repository.workflows.listByUserId(user.id);
-  const leads = await repository.leads.listByUserId(user.id);
-  const activityList = await repository.activity.listByUserId(user.id);
+  const workflows = await repository.workflows.listByWorkspaceId(workspaceId);
+  const leads = await repository.leads.listByWorkspaceId(workspaceId);
+  const activityList = await repository.activity.listByWorkspaceId(workspaceId);
   const activity = activityList.slice(0, 10);
-  const approvals = await repository.approvals.listByUserId(user.id);
+  const approvals = await repository.approvals.listByWorkspaceId(workspaceId);
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
   const errors = activityList.filter((item) => item.status === "error");
   
@@ -53,54 +59,26 @@ function fallbackDraftFollowUp({ leadName = "there", businessName = "our team", 
   return `${opener}, ${leadName}.${detail} ${businessName} can help with this. Would you be open to a quick call so we can understand your needs and suggest the best next step?`;
 }
 
-async function draftFollowUp(input) {
-  const fallback = fallbackDraftFollowUp(input);
-  if (!process.env.GROQ_API_KEY) return { draft: fallback, provider: "local" };
-
-  const prompt = [
-    `Write a concise ${input.tone || "professional"} lead follow-up email.`,
-    `Business: ${input.businessName || "our team"}.`,
-    `Lead: ${input.leadName || "there"}.`,
-    `Inquiry: ${input.message || "No inquiry details provided."}`,
-    "Return only the email body. Keep it under 140 words. Suggest a short call as the next step."
-  ].join("\n");
-
-  try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          { role: "system", content: "You write clear, human business follow-up emails. Never invent facts." },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.4,
-        max_completion_tokens: 240
-      }),
-      signal: AbortSignal.timeout(12000)
-    });
-    if (!response.ok) throw new Error(`Groq request failed: ${response.status}`);
-    const data = await response.json();
-    const draft = data.choices?.[0]?.message?.content?.trim();
-    if (!draft) throw new Error("Groq returned an empty draft");
-    return { draft, provider: "groq" };
-  } catch (error) {
-    console.error("Groq draft fallback:", error.message);
-    return { draft: fallback, provider: "local_fallback" };
-  }
+async function draftFollowUp(input, workspaceId = "biz_mock") {
+  const { analyzeLeadAndGenerate } = require("./ai.service");
+  return analyzeLeadAndGenerate(workspaceId, input);
 }
 
-async function createLeadApproval(user, body) {
+async function createLeadApproval(user, body, workspaceId) {
   const { repository } = require("../app");
   const { syncHubspotLead } = require("./oauth.service");
+
+  if (!workspaceId) {
+    const business = await repository.businesses.getByUserId(user.id);
+    workspaceId = business?.id;
+  }
+  if (!workspaceId) throw new Error("Workspace context required");
 
   const lead = {
     id: id("lead"),
     userId: user.id,
+    workspaceId,
+    workspace_id: workspaceId,
     name: body.name || "New lead",
     email: body.email || null,
     phone: body.phone || null,
@@ -111,12 +89,12 @@ async function createLeadApproval(user, body) {
     createdAt: now()
   };
   try {
-    await repository.leads.create(lead);
+    await repository.leads.create(workspaceId, lead);
   } catch (err) {
     if (err.code === "23505" || err.message.includes("unique") || err.message.includes("duplicate")) {
-      const existing = await repository.leads.getByGmailMessageId(user.id, lead.gmailMessageId);
+      const existing = await repository.leads.getByGmailMessageId(workspaceId, lead.gmailMessageId);
       if (existing) {
-        const approval = await repository.approvals.getByLeadId(existing.id);
+        const approval = await repository.approvals.getByLeadId(workspaceId, existing.id);
         return { lead: existing, approval };
       }
     }
@@ -124,22 +102,65 @@ async function createLeadApproval(user, body) {
   }
 
   const business = await repository.businesses.getByUserId(user.id);
-  const generated = await draftFollowUp({ leadName: lead.name, businessName: business?.name, tone: business?.tone, message: lead.message });
+  const generated = await draftFollowUp({ leadName: lead.name, businessName: business?.name, tone: business?.tone, message: lead.message }, workspaceId);
   
   const approval = {
     id: id("appr"),
     userId: user.id,
+    workspaceId,
+    workspace_id: workspaceId,
     leadId: lead.id,
     status: "pending",
     kind: "follow_up_draft",
     draft: generated.draft,
     aiProvider: generated.provider,
+    promptVersion: generated.prompt_version || null,
+    prompt_version: generated.prompt_version || null,
+    confidence: generated.confidence || null,
     createdAt: now(),
     resolvedAt: null
   };
-  await repository.approvals.create(approval);
+  await repository.approvals.create(workspaceId, approval);
 
-  await repository.activity.create({
+  const { dispatchNotification, notifyWorkspaceUsers } = require("./notification.service");
+  try {
+    const assignedUser = lead.assignedTo || lead.assigned_to;
+    if (assignedUser) {
+      await dispatchNotification(workspaceId, {
+        userId: assignedUser,
+        type: "lead_created",
+        title: "New Lead Assigned",
+        message: `${lead.name} has been assigned to you.`,
+        metadata: { leadId: lead.id }
+      });
+      await dispatchNotification(workspaceId, {
+        userId: assignedUser,
+        type: "approval_required",
+        title: "Approval Required",
+        message: `AI follow-up draft for ${lead.name} requires your approval.`,
+        metadata: { leadId: lead.id, approvalId: approval.id }
+      });
+    } else {
+      await notifyWorkspaceUsers(workspaceId, {
+        roles: ["owner", "admin"],
+        type: "lead_created",
+        title: "New Lead Ingested",
+        message: `${lead.name} has been added and needs review.`,
+        metadata: { leadId: lead.id }
+      });
+      await notifyWorkspaceUsers(workspaceId, {
+        roles: ["owner", "admin"],
+        type: "approval_required",
+        title: "Draft Approval Required",
+        message: `AI follow-up draft for ${lead.name} is ready for approval.`,
+        metadata: { leadId: lead.id, approvalId: approval.id }
+      });
+    }
+  } catch (notifErr) {
+    console.error("Failed to dispatch notifications inside user.service.js:", notifErr.message);
+  }
+
+  await repository.activity.create(workspaceId, {
     userId: user.id,
     type: "lead.created",
     label: `${lead.name} awaiting approval`,
@@ -150,7 +171,7 @@ async function createLeadApproval(user, body) {
   try {
     const sync = await syncHubspotLead(null, user, lead);
     if (sync.provider === "hubspot") {
-      await repository.activity.create({
+      await repository.activity.create(workspaceId, {
         userId: user.id,
         type: "integration.synced",
         label: `${lead.name} synced to HubSpot`,
@@ -160,13 +181,26 @@ async function createLeadApproval(user, body) {
     }
   } catch (error) {
     console.error("HubSpot sync:", error.message);
-    await repository.activity.create({
+    await repository.activity.create(workspaceId, {
       userId: user.id,
       type: "integration.error",
       label: `${lead.name} could not sync to HubSpot`,
       source: "hubspot",
       status: "error"
     });
+  }
+
+  // Trigger workflows matching lead.created
+  const { executeTrigger } = require("./workflow.service");
+  try {
+    await executeTrigger(workspaceId, "lead.created", {
+      userId: user.id,
+      lead,
+      approval,
+      business
+    });
+  } catch (triggerErr) {
+    console.error("Workflow trigger lead.created failed:", triggerErr.message);
   }
 
   return { lead, approval };

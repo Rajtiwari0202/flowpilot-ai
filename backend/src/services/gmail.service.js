@@ -103,55 +103,108 @@ async function getGmailMessage(accessToken, messageId) {
 
 async function syncGmailInbox(user, { createLeadApproval }) {
   const { repository } = require("../app");
-  const integration = await repository.integrations.getByUserIdAndProvider(user.id, "gmail");
-  if (!integration || integration.status !== "connected" || !integration.encryptedCredentials) {
-    const error = new Error("Gmail is not connected for this account");
+  
+  const business = await repository.businesses.getByUserId(user.id);
+  const workspaceId = business?.id;
+  if (!workspaceId) {
+    const error = new Error("Workspace context required for Gmail sync");
     error.status = 400;
     throw error;
   }
 
-  const accessToken = await getIntegrationAccessToken(integration);
-  if (!accessToken) {
-    const error = new Error("Gmail access token is unavailable; reconnect Gmail in Integrations");
-    error.status = 400;
-    throw error;
-  }
-
-  const refs = await listGmailInboxMessages(accessToken, "in:inbox -in:chats -category:promotions -category:social newer_than:7d");
-  const createdLeads = [];
-
-  for (const ref of refs) {
-    const exists = await repository.leads.getByGmailMessageId(user.id, ref.id);
-    if (exists) continue;
-    
-    let message;
-    try {
-      message = await getGmailMessage(accessToken, ref.id);
-    } catch (error) {
-      console.error("Gmail message fetch:", error.message);
-      continue;
+  return repository.withWorkspaceContext(workspaceId, async () => {
+    const integration = await repository.integrations.getByUserIdAndProvider(user.id, "gmail");
+    if (!integration || integration.status !== "connected" || !integration.encryptedCredentials) {
+      const error = new Error("Gmail is not connected for this account");
+      error.status = 400;
+      throw error;
     }
-    const headers = Object.fromEntries((message.payload?.headers || []).map((header) => [header.name, header.value]));
-    const sender = parseGmailFromHeader(headers.From || "");
-    const subject = headers.Subject || "New inbox inquiry";
-    const summary = message.snippet || subject;
 
-    const { lead } = await createLeadApproval(user, {
-      name: sender.name,
-      email: sender.email,
-      message: `${subject}: ${summary}`,
-      source: "Gmail",
-      gmailMessageId: ref.id
+    const accessToken = await getIntegrationAccessToken(integration);
+    if (!accessToken) {
+      const error = new Error("Gmail access token is unavailable; reconnect Gmail in Integrations");
+      error.status = 400;
+      throw error;
+    }
+
+    const syncState = await repository.gmailSyncState.getByWorkspaceId(workspaceId);
+    const refs = await listGmailInboxMessages(accessToken, "in:inbox -in:chats -category:promotions -category:social newer_than:7d");
+    const createdLeads = [];
+    const newlyProcessedMsgIds = [];
+    const newlyProcessedThreadIds = [];
+
+    for (const ref of refs) {
+      // 1. Thread Tracking & Message Tracking Idempotency Check
+      const isProcessedMsg = await repository.gmailSyncState.hasProcessedMessage(workspaceId, ref.id) || newlyProcessedMsgIds.includes(ref.id);
+      const isProcessedThread = syncState.processedThreadIds?.includes(ref.threadId) || newlyProcessedThreadIds.includes(ref.threadId);
+      
+      if (isProcessedMsg || isProcessedThread) continue;
+
+      // Double-check uniqueness in leads database table
+      const exists = await repository.leads.getByGmailMessageId(workspaceId, ref.id);
+      if (exists) {
+        newlyProcessedMsgIds.push(ref.id);
+        newlyProcessedThreadIds.push(ref.threadId);
+        continue;
+      }
+      
+      let message;
+      try {
+        message = await getGmailMessage(accessToken, ref.id);
+      } catch (error) {
+        console.error("Gmail message fetch:", error.message);
+        continue;
+      }
+      const headers = Object.fromEntries((message.payload?.headers || []).map((header) => [header.name, header.value]));
+      const sender = parseGmailFromHeader(headers.From || "");
+      const subject = headers.Subject || "New inbox inquiry";
+      const summary = message.snippet || subject;
+
+      const { lead } = await createLeadApproval(user, {
+        name: sender.name,
+        email: sender.email,
+        message: `${subject}: ${summary}`,
+        source: "Gmail",
+        gmailMessageId: ref.id
+      }, workspaceId);
+      
+      // Trigger workflows matching email.received
+      const { executeTrigger } = require("./workflow.service");
+      try {
+        await executeTrigger(workspaceId, "email.received", {
+          userId: user.id,
+          lead,
+          email: ref
+        });
+      } catch (triggerErr) {
+        console.error("Workflow trigger email.received failed:", triggerErr.message);
+      }
+      
+      createdLeads.push(lead);
+      newlyProcessedMsgIds.push(ref.id);
+      newlyProcessedThreadIds.push(ref.threadId);
+
+      if (createdLeads.length >= 10) break;
+    }
+
+    // 2. Persistent Checkpoint Sync State Upsert
+    const lastHistoryId = refs[0]?.historyId || syncState.lastHistoryId || null;
+    if (newlyProcessedMsgIds.length > 0) {
+      for (let i = 0; i < newlyProcessedMsgIds.length; i++) {
+        await repository.gmailSyncState.markMessagesProcessed(workspaceId, [newlyProcessedMsgIds[i]], newlyProcessedThreadIds[i]);
+      }
+    }
+    await repository.gmailSyncState.upsert(workspaceId, {
+      lastHistoryId,
+      processedMessageIds: newlyProcessedMsgIds,
+      processedThreadIds: newlyProcessedThreadIds
     });
-    
-    createdLeads.push(lead);
-    if (createdLeads.length >= 10) break;
-  }
 
-  return {
-    count: createdLeads.length,
-    leads: createdLeads
-  };
+    return {
+      count: createdLeads.length,
+      leads: createdLeads
+    };
+  });
 }
 
 module.exports = {

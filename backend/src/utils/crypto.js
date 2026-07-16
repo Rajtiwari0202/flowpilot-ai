@@ -17,20 +17,35 @@ function verifyPassword(password, storedHash) {
 function encryptSecret(value, userSalt = "") {
   const iv = crypto.randomBytes(12);
   const baseKey = process.env.TOKEN_ENCRYPTION_KEY || JWT_SECRET;
-  const derivedKey = crypto.createHmac("sha256", baseKey).update(userSalt).digest();
+  const derivedKey = crypto.pbkdf2Sync(baseKey, Buffer.from(userSalt, "utf8"), 100000, 32, "sha256");
   const cipher = crypto.createCipheriv("aes-256-gcm", derivedKey, iv);
   const encrypted = Buffer.concat([cipher.update(JSON.stringify(value), "utf8"), cipher.final()]);
-  return `${iv.toString("hex")}:${cipher.getAuthTag().toString("hex")}:${encrypted.toString("hex")}`;
+  return `pbkdf2:${iv.toString("hex")}:${cipher.getAuthTag().toString("hex")}:${encrypted.toString("hex")}`;
 }
 
 function decryptSecret(value, userSalt = "") {
   if (!value) return null;
-  const [iv, tag, encrypted] = String(value).split(":");
+  const parts = String(value).split(":");
   const baseKey = process.env.TOKEN_ENCRYPTION_KEY || JWT_SECRET;
-  const derivedKey = crypto.createHmac("sha256", baseKey).update(userSalt).digest();
-  const decipher = crypto.createDecipheriv("aes-256-gcm", derivedKey, Buffer.from(iv, "hex"));
-  decipher.setAuthTag(Buffer.from(tag, "hex"));
-  return JSON.parse(Buffer.concat([decipher.update(Buffer.from(encrypted, "hex")), decipher.final()]).toString("utf8"));
+  
+  if (parts[0] === "pbkdf2") {
+    const [, iv, tag, encrypted] = parts;
+    const derivedKey = crypto.pbkdf2Sync(baseKey, Buffer.from(userSalt, "utf8"), 100000, 32, "sha256");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", derivedKey, Buffer.from(iv, "hex"));
+    decipher.setAuthTag(Buffer.from(tag, "hex"));
+    return JSON.parse(Buffer.concat([decipher.update(Buffer.from(encrypted, "hex")), decipher.final()]).toString("utf8"));
+  }
+
+  try {
+    const [iv, tag, encrypted] = parts;
+    const derivedKey = crypto.createHmac("sha256", baseKey).update(userSalt).digest();
+    const decipher = crypto.createDecipheriv("aes-256-gcm", derivedKey, Buffer.from(iv, "hex"));
+    decipher.setAuthTag(Buffer.from(tag, "hex"));
+    return JSON.parse(Buffer.concat([decipher.update(Buffer.from(encrypted, "hex")), decipher.final()]).toString("utf8"));
+  } catch (err) {
+    console.error("Failed to decrypt legacy credentials:", err.message);
+    return null;
+  }
 }
 
 function signaturesMatch(raw, signature, secret) {

@@ -246,7 +246,8 @@ async function getIntegrationAccessToken(integration) {
     );
     if (!lockedIntegration) return null;
 
-    const tokens = decryptSecret(lockedIntegration.encryptedCredentials, lockedIntegration.userId);
+    const salt = lockedIntegration.encryptionSalt || lockedIntegration.userId;
+    const tokens = decryptSecret(lockedIntegration.encryptedCredentials, salt);
     if (!tokens) return null;
 
     const config = integrationConfig[lockedIntegration.provider];
@@ -281,8 +282,11 @@ async function getIntegrationAccessToken(integration) {
       obtained_at: now()
     };
 
-    await repository.integrations.upsert(lockedIntegration.userId, lockedIntegration.provider, {
-      encryptedCredentials: encryptSecret(refreshedTokens, lockedIntegration.userId)
+    const workspaceId = lockedIntegration.workspaceId || lockedIntegration.workspace_id;
+    const refreshSalt = lockedIntegration.encryptionSalt || lockedIntegration.userId;
+    await repository.integrations.upsert(workspaceId, lockedIntegration.provider, {
+      userId: lockedIntegration.userId,
+      encryptedCredentials: encryptSecret(refreshedTokens, refreshSalt)
     });
 
     return data.access_token;
@@ -352,10 +356,25 @@ async function processGoogleLogin(code, verifier = null) {
     });
   }
 
-  await repository.integrations.upsert(user.id, "gmail", {
+  const business = await repository.businesses.getByUserId(user.id);
+  const workspaceId = business?.id || "biz_mock";
+  const salt = require("crypto").randomBytes(16).toString("hex");
+
+  await repository.integrations.upsert(workspaceId, "gmail", {
     status: "connected",
-    encryptedCredentials: encryptSecret(tokens, user.id),
+    userId: user.id,
+    encryptedCredentials: encryptSecret(tokens, salt),
+    encryptionSalt: salt,
     connectedEmail: profile.email
+  });
+
+  const { logAuditAction } = require("./auditLog.service");
+  await logAuditAction(workspaceId, {
+    actorId: user.id,
+    entityType: "integration",
+    entityId: "gmail",
+    action: "integration.connected",
+    afterState: { provider: "gmail", connectedEmail: profile.email }
   });
 
   await repository.activity.create({

@@ -25,7 +25,23 @@ async function dashboardFor(user, workspaceId) {
     const business = await repository.businesses.getByUserId(user.id);
     workspaceId = business?.id;
   }
-  if (!workspaceId) throw new Error("Workspace context required");
+  if (!workspaceId) {
+    return {
+      user: publicUser(user),
+      business: null,
+      metrics: {
+        activeAutomations: 0,
+        leadsProcessedToday: 0,
+        pendingApprovals: 0,
+        errors: 0,
+        timeSavedMinutesThisWeek: 0,
+        successRate: 100
+      },
+      workflows: [],
+      activity: [],
+      approvals: []
+    };
+  }
 
   const business = await repository.businesses.getByUserId(user.id);
   const workflows = await repository.workflows.listByWorkspaceId(workspaceId);

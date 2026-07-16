@@ -39,8 +39,19 @@ async function updateBusiness(req, res, store, user) {
   const { repository } = require("../app");
   let business = await repository.businesses.getByUserId(user.id);
   if (!business) {
-    business = { id: id("biz"), userId: user.id, name: body.name || "Untitled Business", type: body.type || "other", tone: body.tone || "professional", goals: Array.isArray(body.goals) ? body.goals : ["lead_follow_up"], createdAt: now(), updatedAt: now() };
+    const bizId = id("biz");
+    business = { id: bizId, userId: user.id, name: body.name || "Untitled Business", type: body.type || "other", tone: body.tone || "professional", goals: Array.isArray(body.goals) ? body.goals : ["lead_follow_up"], createdAt: now(), updatedAt: now() };
     await repository.businesses.create(business);
+
+    // Auto-create workspace member row for owner
+    await repository.workspaceMembers.create({
+      id: id("wmem"),
+      workspaceId: bizId,
+      userId: user.id,
+      role: "owner",
+      createdAt: now(),
+      updatedAt: now()
+    });
   } else {
     const updates = {
       name: body.name !== undefined ? body.name : business.name,

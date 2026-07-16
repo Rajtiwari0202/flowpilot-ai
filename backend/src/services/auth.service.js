@@ -113,6 +113,16 @@ async function seedDemoWorkspace(store, { writeStore } = {}) {
   
   await repository.businesses.create({ id: "biz_demo_agency", userId, name: "Nova Creative Studio", type: "agency", tone: "friendly", goals: ["lead_follow_up"], createdAt, updatedAt: createdAt });
   
+  // Auto-create workspace member for demo user
+  await repository.workspaceMembers.create({
+    id: "wmem_demo_founder",
+    workspaceId: "biz_demo_agency",
+    userId,
+    role: "owner",
+    createdAt,
+    updatedAt: createdAt
+  });
+  
   await repository.integrations.create({ id: "int_demo_gmail", userId, provider: "gmail", status: "connected", createdAt, updatedAt: createdAt });
   await repository.integrations.create({ id: "int_demo_hubspot", userId, provider: "hubspot", status: "connected", createdAt, updatedAt: createdAt });
   

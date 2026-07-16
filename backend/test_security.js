@@ -243,12 +243,20 @@ async function runSecurityTests() {
     const middleware = requireWorkspaceRole();
 
     const origGetByWorkspaceAndUser = repository.workspaceMembers.getByWorkspaceAndUser;
-    repository.workspaceMembers.getByWorkspaceAndUser = async () => ({ role: "owner" });
+    const origListByUserId = repository.workspaceMembers.listByUserId;
 
-    // GET request (no body)
+    // GET request (no body) - Auto-resolves for single workspace membership
+    repository.workspaceMembers.getByWorkspaceAndUser = async () => ({ role: "owner" });
+    repository.workspaceMembers.listByUserId = async () => [{
+      workspaceId: "biz_123",
+      userId: "usr_123",
+      role: "owner"
+    }];
+
     const mockGetReq = {
       headers: { "x-workspace-id": "biz_123" },
       user: { id: "usr_123" },
+      url: "http://localhost:8787/api/dashboard",
       query: {},
       body: undefined
     };
@@ -259,12 +267,16 @@ async function runSecurityTests() {
     }, () => { middlewareNextCalled = true; });
     assert.ok(middlewareNextCalled);
 
-    repository.workspaceMembers.getByWorkspaceAndUser = origGetByWorkspaceAndUser;
+    // OPTIONS request (missing workspace headers when user has multiple workspaces)
+    repository.workspaceMembers.listByUserId = async () => [
+      { workspaceId: "biz_123", userId: "usr_123", role: "owner" },
+      { workspaceId: "biz_456", userId: "usr_123", role: "member" }
+    ];
 
-    // OPTIONS request (missing workspace headers)
     const mockOptionsReq = {
       headers: {},
       user: { id: "usr_123" },
+      url: "http://localhost:8787/api/dashboard",
       query: undefined,
       body: undefined
     };
@@ -277,6 +289,9 @@ async function runSecurityTests() {
     await middleware(mockOptionsReq, mockResEmpty, () => { optionsNextCalled = true; });
     assert.equal(optionsNextCalled, false);
     assert.equal(mockResEmpty.statusCode, 400);
+
+    repository.workspaceMembers.getByWorkspaceAndUser = origGetByWorkspaceAndUser;
+    repository.workspaceMembers.listByUserId = origListByUserId;
 
     console.log("✅ Zero-Trust Security Validation Test Suite Passed!");
   } finally {
